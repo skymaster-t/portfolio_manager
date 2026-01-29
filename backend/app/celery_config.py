@@ -13,7 +13,8 @@ if not REDIS_URL:
 celery_app = Celery(
     "worker",
     broker=REDIS_URL,
-    backend=REDIS_URL
+    backend=REDIS_URL,
+    include=["app.tasks.update_prices"]  # Explicitly include the tasks module
 )
 
 celery_app.conf.update(
@@ -23,3 +24,14 @@ celery_app.conf.update(
     timezone="America/Toronto",
     enable_utc=True,
 )
+
+# Auto-discover tasks in app.tasks package (scalable for future tasks)
+celery_app.autodiscover_tasks(['app.tasks'])
+
+# Beat schedule
+celery_app.conf.beat_schedule = {
+    "update-stock-prices-every-15-min": {
+        "task": "app.tasks.update_all_prices",  # Matches @celery_app.task decorator name
+        "schedule": 900.0,  # 15 minutes
+    },
+}

@@ -34,9 +34,16 @@ class Holding(Base):
     quantity = Column(Float)
     purchase_price = Column(Float)
     current_price = Column(Float, nullable=True)
-    change_percent = Column(Float, nullable=True)
+    
+    # All-time (from purchase to current)
+    all_time_change_percent = Column(Float, nullable=True)
     market_value = Column(Float, nullable=True)
-    gain_loss = Column(Float, nullable=True)
+    all_time_gain_loss = Column(Float, nullable=True)
+    
+    # Daily from FMP
+    daily_change = Column(Float, nullable=True)
+    daily_change_percent = Column(Float, nullable=True)
+    
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
 
     portfolio = relationship("Portfolio", back_populates="holdings")

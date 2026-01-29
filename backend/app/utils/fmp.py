@@ -23,6 +23,15 @@ def fetch_price_data(symbol: str):
             "price": quote.get("price"),
             "change": quote.get("change"),
             "change_percent": quote.get("changePercentage"),
+            "open": quote.get("open"),
+            "previous_close": quote.get("previousClose"),
+            "day_high": quote.get("dayHigh"),
+            "day_low": quote.get("dayLow"),
+            "volume": quote.get("volume"),
+            "name": quote.get("name"),
+            "exchange": quote.get("exchange"),
+            "timestamp": quote.get("timestamp"),
+            # Add more if needed later
         }
     except requests.RequestException as e:
         raise HTTPException(status_code=400, detail=f"FMP API request failed for {symbol}: {str(e)}")

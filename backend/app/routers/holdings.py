@@ -4,10 +4,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Holding, UnderlyingHolding, Portfolio
 from app.schemas import HoldingCreate, HoldingUpdate, HoldingResponse
-import requests
-import os
-from typing import List
 from app.utils.fmp import fetch_price_data
+from typing import List
 
 router = APIRouter(prefix="/holdings", tags=["holdings"])
 
@@ -36,15 +34,25 @@ def create_holding(holding_data: HoldingCreate, db: Session = Depends(get_db)):
     
     price_data = fetch_price_data(holding_data.symbol)
     
+    current_price = price_data.get("price")
+    if current_price is None:
+        raise HTTPException(status_code=400, detail="No price data available from FMP")
+
+    # All-time calculations (from purchase to current)
+    all_time_change_percent = ((current_price - holding_data.purchase_price) / holding_data.purchase_price) * 100 if holding_data.purchase_price != 0 else None
+    all_time_gain_loss = (current_price - holding_data.purchase_price) * holding_data.quantity
+
     new_holding = Holding(
         symbol=holding_data.symbol.upper(),
         type=holding_data.type,
         quantity=holding_data.quantity,
         purchase_price=holding_data.purchase_price,
-        current_price=price_data["price"],
-        change_percent=price_data["change_percent"],
-        market_value=price_data["price"] * holding_data.quantity if price_data["price"] else None,
-        gain_loss=(price_data["price"] - holding_data.purchase_price) * holding_data.quantity if price_data["price"] else None,
+        current_price=current_price,
+        all_time_change_percent=all_time_change_percent,
+        market_value=current_price * holding_data.quantity,
+        all_time_gain_loss=all_time_gain_loss,           
+        daily_change=price_data.get("change"),            
+        daily_change_percent=price_data.get("change_percent"),  
         portfolio_id=portfolio.id
     )
     db.add(new_holding)
@@ -54,7 +62,7 @@ def create_holding(holding_data: HoldingCreate, db: Session = Depends(get_db)):
     if holding_data.type == "etf" and holding_data.underlyings:
         for u in holding_data.underlyings:
             underlying = UnderlyingHolding(symbol=u.symbol.upper(), holding_id=new_holding.id)
-            db.add(underlying)  # Fixed: Removed accidental "maple" typo
+            db.add(underlying)
         db.commit()
 
     return new_holding
@@ -66,26 +74,33 @@ def update_holding(holding_id: int, holding_data: HoldingUpdate, db: Session = D
         raise HTTPException(status_code=404, detail="Holding not found")
 
     update_dict = holding_data.dict(exclude_unset=True)
-    symbol_changed = "symbol" in update_dict and update_dict["symbol"] != holding.symbol
 
     for key, value in update_dict.items():
         if key != "underlyings":
             setattr(holding, key, value)
 
-    # Refetch price if symbol changed or always (to keep current)
+    # Refetch price to keep current
     price_data = fetch_price_data(holding.symbol)
-    holding.current_price = price_data["price"]
-    holding.change_percent = price_data["change_percent"]
-    holding.market_value = price_data["price"] * holding.quantity if price_data["price"] else None
-    holding.gain_loss = (price_data["price"] - holding.purchase_price) * holding.quantity if price_data["price"] else None
+    current_price = price_data.get("price")
+    if current_price is None:
+        raise HTTPException(status_code=400, detail="No price data available from FMP")
 
-    # Handle underlyings (delete old, add new if ETF)
+    # All-time calculations (from purchase to current)
+    all_time_change_percent = ((current_price - holding.purchase_price) / holding.purchase_price) * 100 if holding.purchase_price != 0 else None
+    all_time_gain_loss = (current_price - holding.purchase_price) * holding.quantity
+
+    holding.current_price = current_price
+    holding.all_time_change_percent = all_time_change_percent 
+    holding.market_value = current_price * holding.quantity
+    holding.all_time_gain_loss = all_time_gain_loss          
+    holding.daily_change = price_data.get("change")          
+    holding.daily_change_percent = price_data.get("change_percent") 
+
+    # Handle underlyings if ETF
     if holding.type == "etf":
         if "underlyings" in update_dict:
-            # Delete existing
             db.query(UnderlyingHolding).filter(UnderlyingHolding.holding_id == holding.id).delete()
-            # Add new
-            for u in holding_data.underlyings or []:
+            for u in (holding_data.underlyings or []):
                 underlying = UnderlyingHolding(symbol=u.symbol.upper(), holding_id=holding.id)
                 db.add(underlying)
 
@@ -99,7 +114,6 @@ def delete_holding(holding_id: int, db: Session = Depends(get_db)):
     if not holding:
         raise HTTPException(status_code=404, detail="Holding not found")
     
-    # Delete underlyings first
     db.query(UnderlyingHolding).filter(UnderlyingHolding.holding_id == holding_id).delete()
     db.delete(holding)
     db.commit()

@@ -1,3 +1,4 @@
+# backend/app/schemas.py
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
@@ -30,16 +31,23 @@ class HoldingCreate(HoldingBase):
 class HoldingUpdate(HoldingBase):
     symbol: Optional[str] = None
     type: Optional[HoldingType] = None
-    quantity: Optional[float] = None  # Fixed: Removed accidental "Droit" typo
+    quantity: Optional[float] = None
     purchase_price: Optional[float] = None
     underlyings: Optional[List[UnderlyingCreate]] = None
 
 class HoldingResponse(HoldingBase):
     id: int
     current_price: Optional[float] = None
-    change_percent: Optional[float] = None
+    
+    # All-time (from purchase to current)
+    all_time_change_percent: Optional[float] = None
     market_value: Optional[float] = None
-    gain_loss: Optional[float] = None
+    all_time_gain_loss: Optional[float] = None
+    
+    # Daily from FMP
+    daily_change: Optional[float] = None
+    daily_change_percent: Optional[float] = None
+    
     underlyings: List[Underlying] = []
 
     class Config:

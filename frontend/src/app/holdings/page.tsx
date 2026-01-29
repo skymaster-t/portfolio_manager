@@ -1,6 +1,7 @@
+// src/app/holdings/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
@@ -29,13 +30,15 @@ interface Underlying {
 interface Holding {
   id: number;
   symbol: string;
-  type: 'stock' | 'stock' | 'etf';
+  type: 'stock' | 'etf';
   quantity: number;
   purchase_price: number;
   current_price?: number;
-  change_percent?: number;
+  all_time_change_percent?: number;       // All-time % change from purchase
   market_value?: number;
-  gain_loss?: number;
+  all_time_gain_loss?: number;            // All-time $ gain/loss
+  daily_change?: number;                  // Daily $ change from FMP
+  daily_change_percent?: number;          // Daily % change from FMP
   underlyings?: Underlying[];
 }
 
@@ -49,6 +52,22 @@ export default function Holdings() {
   const [openForm, setOpenForm] = useState(false);
   const [openDelete, setOpenDelete] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
+  const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
+  const [exchangeRate, setExchangeRate] = useState<number>(1.37); // Fallback
+
+  // Fetch live USD→CAD rate
+  useEffect(() => {
+    const fetchRate = async () => {
+      try {
+        const resp = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json');
+        const data = await resp.json();
+        setExchangeRate(data.usd.cad || 1.37);
+      } catch {
+        console.warn("Failed to fetch exchange rate, using fallback 1.37");
+      }
+    };
+    fetchRate();
+  }, []);
 
   // Form state
   const [symbol, setSymbol] = useState('');
@@ -66,7 +85,7 @@ export default function Holdings() {
     refetchInterval: 900000, // 15 min
   });
 
-  const getPriceErrorMessage = (symbol: string, backendMessage: string) => {
+  const getPriceErrorMessage = (symbol: string) => {
     const upperSymbol = symbol.toUpperCase();
     if (upperSymbol.endsWith('.TO')) {
       return `Unable to fetch price for "${symbol}". No price data available at this time.`;
@@ -86,7 +105,7 @@ export default function Holdings() {
     onError: (error: any) => {
       const backendMessage = error.response?.data?.detail || "";
       if (backendMessage.includes("price") || backendMessage.includes("symbol") || backendMessage.includes("data")) {
-        toast.error(getPriceErrorMessage(symbol, backendMessage));
+        toast.error(getPriceErrorMessage(symbol));
       } else {
         toast.error(backendMessage || "Failed to add holding");
       }
@@ -104,7 +123,7 @@ export default function Holdings() {
     onError: (error: any) => {
       const backendMessage = error.response?.data?.detail || "";
       if (backendMessage.includes("price") || backendMessage.includes("symbol") || backendMessage.includes("data")) {
-        toast.error(getPriceErrorMessage(symbol, backendMessage));
+        toast.error(getPriceErrorMessage(symbol));
       } else {
         toast.error(backendMessage || "Failed to update holding");
       }
@@ -179,81 +198,123 @@ export default function Holdings() {
     setTempUnderlyings(tempUnderlyings.filter(u => u.id !== id));
   };
 
+  // Currency logic
+  const getHoldingCurrency = (symbol: string): 'CAD' | 'USD' => {
+    return symbol.toUpperCase().endsWith('.TO') ? 'CAD' : 'USD';
+  };
+
+  const convertValue = (value: number | undefined, fromCurrency: 'CAD' | 'USD'): number => {
+    if (value === undefined || value === null) return 0;
+    if (displayCurrency === fromCurrency) return value;
+    return displayCurrency === 'CAD' ? value * exchangeRate : value / exchangeRate;
+  };
+
+  const formatCurrency = (value: number | undefined, fromCurrency: 'CAD' | 'USD') => {
+    const converted = convertValue(value, fromCurrency);
+    const prefix = displayCurrency === 'CAD' ? 'C$' : '$';
+    return value === undefined || value === null ? '-' : `${prefix}${converted.toFixed(2)}`;
+  };
+
+  const formatPercent = (percent: number | undefined) => {
+    if (percent === undefined || percent === null) return '-';
+    const formatted = percent.toFixed(2);
+    return <span className={percent >= 0 ? 'text-green-600' : 'text-red-600'}>{formatted}%</span>;
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <h1 className="text-4xl font-bold">Holdings</h1>
-        <Dialog open={openForm} onOpenChange={setOpenForm}>
-          <DialogTrigger asChild>
-            <Button onClick={() => openFormDialog()}>
-              <Plus className="mr-2 h-4 w-4" /> Add Holding
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{selectedHolding ? 'Edit' : 'Add'} Holding</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Symbol</Label>
-                  <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="AAPL or XIC.TO" />
-                </div>
-                <div>
-                  <Label>Type</Label>
-                  <Select value={type_} onValueChange={(v: 'stock' | 'etf') => setType(v)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="etf">ETF (default)</SelectItem>
-                      <SelectItem value="stock">Stock</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Quantity</Label>
-                  <Input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" />
-                </div>
-                <div>
-                  <Label>Purchase Price</Label>
-                  <Input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="150.00" />
-                </div>
-              </div>
-
-              {type_ === 'etf' && (
-                <div className="border-t pt-4">
-                  <Label>Underlying Stocks</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Input value={underlyingSymbol} onChange={e => setUnderlyingSymbol(e.target.value)} placeholder="MSFT" />
-                    <Button onClick={addUnderlying} variant="outline">Add</Button>
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {tempUnderlyings.map(u => (
-                      <div key={u.id} className="flex items-center justify-between bg-muted p-2 rounded">
-                        <span className="font-medium">{u.symbol}</span>
-                        <Button size="sm" variant="ghost" onClick={() => removeUnderlying(u.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                    {tempUnderlyings.length === 0 && <p className="text-sm text-muted-foreground">No underlying stocks added yet.</p>}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setOpenForm(false)}>Cancel</Button>
-              <Button onClick={handleSubmit} disabled={addMutation.isPending || updateMutation.isPending}>
-                {addMutation.isPending || updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {selectedHolding ? 'Update' : 'Add'} Holding
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <div className="flex gap-2">
+          <Button
+            variant={displayCurrency === 'CAD' ? 'default' : 'outline'}
+            size="icon"
+            className="rounded-full w-12 h-12 text-2xl"
+            onClick={() => setDisplayCurrency('CAD')}
+          >
+            🇨🇦
+          </Button>
+          <Button
+            variant={displayCurrency === 'USD' ? 'default' : 'outline'}
+            size="icon"
+            className="rounded-full w-12 h-12 text-2xl"
+            onClick={() => setDisplayCurrency('USD')}
+          >
+            🇺🇸
+          </Button>
+        </div>
       </div>
+
+      <Dialog open={openForm} onOpenChange={setOpenForm}>
+        <DialogTrigger asChild>
+          <Button onClick={() => openFormDialog()}>
+            <Plus className="mr-2 h-4 w-4" /> Add Holding
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{selectedHolding ? 'Edit' : 'Add'} Holding</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Symbol</Label>
+                <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="AAPL or XIC.TO" />
+              </div>
+              <div>
+                <Label>Type</Label>
+                <Select value={type_} onValueChange={(v: 'stock' | 'etf') => setType(v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="etf">ETF (default)</SelectItem>
+                    <SelectItem value="stock">Stock</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Quantity</Label>
+                <Input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" />
+              </div>
+              <div>
+                <Label>Purchase Price</Label>
+                <Input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="150.00" />
+              </div>
+            </div>
+
+            {type_ === 'etf' && (
+              <div className="border-t pt-4">
+                <Label>Underlying Stocks</Label>
+                <div className="flex gap-2 mt-2">
+                  <Input value={underlyingSymbol} onChange={e => setUnderlyingSymbol(e.target.value)} placeholder="MSFT" />
+                  <Button onClick={addUnderlying} variant="outline">Add</Button>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {tempUnderlyings.map(u => (
+                    <div key={u.id} className="flex items-center justify-between bg-muted p-2 rounded">
+                      <span className="font-medium">{u.symbol}</span>
+                      <Button size="sm" variant="ghost" onClick={() => removeUnderlying(u.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  {tempUnderlyings.length === 0 && <p className="text-sm text-muted-foreground">No underlying stocks added yet.</p>}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpenForm(false)}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={addMutation.isPending || updateMutation.isPending}>
+              {addMutation.isPending || updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {selectedHolding ? 'Update' : 'Add'} Holding
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
@@ -274,54 +335,62 @@ export default function Holdings() {
                   <TableHead>Purchase Price</TableHead>
                   <TableHead>Current Price</TableHead>
                   <TableHead>Market Value</TableHead>
-                  <TableHead>Change %</TableHead>
-                  <TableHead>Gain/Loss</TableHead>
+                  <TableHead>All Time Change %</TableHead>
+                  <TableHead>All Time Gain/Loss</TableHead>
+                  <TableHead>Daily Change %</TableHead>
+                  <TableHead>Daily Gain/Loss</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {holdings.map((h) => (
-                  <TableRow key={h.id}>
-                    <TableCell className="font-medium">{h.symbol}</TableCell>
-                    <TableCell>
-                      <Badge variant={h.type === 'etf' ? 'default' : 'secondary'}>{h.type.toUpperCase()}</Badge>
-                    </TableCell>
-                    <TableCell>{h.quantity}</TableCell>
-                    <TableCell>${h.purchase_price.toFixed(2)}</TableCell>
-                    <TableCell>${h.current_price?.toFixed(2) ?? '-'}</TableCell>
-                    <TableCell>${h.market_value?.toFixed(2) ?? '-'}</TableCell>
-                    <TableCell className={h.change_percent && h.change_percent >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {h.change_percent ? `${h.change_percent.toFixed(2)}%` : '-'}
-                    </TableCell>
-                    <TableCell className={h.gain_loss && h.gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {h.gain_loss ? `$${h.gain_loss.toFixed(2)}` : '-'}
-                    </TableCell>
-                    <TableCell className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => openFormDialog(h)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Dialog open={openDelete && selectedHolding?.id === h.id} onOpenChange={setOpenDelete}>
-                        <DialogTrigger asChild>
-                          <Button size="sm" variant="ghost" onClick={() => setSelectedHolding(h)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Delete Holding</DialogTitle>
-                          </DialogHeader>
-                          <p>Are you sure you want to delete {h.symbol}? This cannot be undone.</p>
-                          <div className="flex justify-end gap-2 mt-4">
-                            <Button variant="outline" onClick={() => setOpenDelete(false)}>Cancel</Button>
-                            <Button variant="destructive" onClick={() => deleteMutation.mutate(h.id)}>
-                              {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Delete'}
+                {holdings.map((h) => {
+                  const holdingCurrency = getHoldingCurrency(h.symbol);
+                  const dailyGainLoss = h.daily_change !== undefined ? h.daily_change * h.quantity : undefined;
+                  return (
+                    <TableRow key={h.id}>
+                      <TableCell className="font-medium">{h.symbol}</TableCell>
+                      <TableCell>
+                        <Badge variant={h.type === 'etf' ? 'default' : 'secondary'}>{h.type.toUpperCase()}</Badge>
+                      </TableCell>
+                      <TableCell>{h.quantity}</TableCell>
+                      <TableCell>{formatCurrency(h.purchase_price, holdingCurrency)}</TableCell>
+                      <TableCell>{formatCurrency(h.current_price, holdingCurrency)}</TableCell>
+                      <TableCell>{formatCurrency(h.market_value, holdingCurrency)}</TableCell>
+                      <TableCell>{formatPercent(h.all_time_change_percent)}</TableCell>
+                      <TableCell className={h.all_time_gain_loss && h.all_time_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatCurrency(h.all_time_gain_loss, holdingCurrency)}
+                      </TableCell>
+                      <TableCell>{formatPercent(h.daily_change_percent)}</TableCell>
+                      <TableCell className={dailyGainLoss && dailyGainLoss >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {dailyGainLoss !== undefined ? formatCurrency(dailyGainLoss, holdingCurrency) : '-'}
+                      </TableCell>
+                      <TableCell className="flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => openFormDialog(h)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Dialog open={openDelete && selectedHolding?.id === h.id} onOpenChange={setOpenDelete}>
+                          <DialogTrigger asChild>
+                            <Button size="sm" variant="ghost" onClick={() => setSelectedHolding(h)}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          </DialogTrigger>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Delete Holding</DialogTitle>
+                            </DialogHeader>
+                            <p>Are you sure you want to delete {h.symbol}? This cannot be undone.</p>
+                            <div className="flex justify-end gap-2 mt-4">
+                              <Button variant="outline" onClick={() => setOpenDelete(false)}>Cancel</Button>
+                              <Button variant="destructive" onClick={() => deleteMutation.mutate(h.id)}>
+                                {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Delete'}
+                              </Button>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
