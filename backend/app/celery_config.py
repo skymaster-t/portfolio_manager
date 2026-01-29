@@ -23,11 +23,3 @@ celery_app.conf.update(
     timezone="America/Toronto",
     enable_utc=True,
 )
-
-# For scheduling (Celery Beat)
-celery_app.conf.beat_schedule = {
-    "update-stock-prices-every-5-min": {
-        "task": "app.tasks.update_stock_prices",
-        "schedule": 300.0,  # 5 minutes
-    },
-}

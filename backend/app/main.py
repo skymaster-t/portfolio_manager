@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 
+from app.routers import holdings
+
 # Explicitly load .env from the app directory
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -16,6 +18,8 @@ if not REDIS_URL:
 r = redis.Redis.from_url(REDIS_URL)
 
 app = FastAPI()
+
+app.include_router(holdings.router)
 
 app.add_middleware(
     CORSMiddleware,
