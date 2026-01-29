@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 
 from app.routers import holdings
+from app.routers import portfolios
 
 # Explicitly load .env from the app directory
 env_path = Path(__file__).parent / ".env"
@@ -20,6 +21,7 @@ r = redis.Redis.from_url(REDIS_URL)
 app = FastAPI()
 
 app.include_router(holdings.router)
+app.include_router(portfolios.router)
 
 app.add_middleware(
     CORSMiddleware,

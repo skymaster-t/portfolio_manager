@@ -1,4 +1,3 @@
-# backend/app/schemas.py
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
@@ -24,15 +23,18 @@ class HoldingBase(BaseModel):
     type: HoldingType = HoldingType.etf
     quantity: float
     purchase_price: float
+    portfolio_id: int
 
 class HoldingCreate(HoldingBase):
     underlyings: Optional[List[UnderlyingCreate]] = []
+    portfolio_id: int
 
-class HoldingUpdate(HoldingBase):
+class HoldingUpdate(BaseModel):
     symbol: Optional[str] = None
     type: Optional[HoldingType] = None
     quantity: Optional[float] = None
     purchase_price: Optional[float] = None
+    portfolio_id: Optional[int] = None
     underlyings: Optional[List[UnderlyingCreate]] = None
 
 class HoldingResponse(HoldingBase):
@@ -49,6 +51,20 @@ class HoldingResponse(HoldingBase):
     daily_change_percent: Optional[float] = None
     
     underlyings: List[Underlying] = []
+
+    class Config:
+        from_attributes = True
+
+class PortfolioBase(BaseModel):
+    name: str
+
+class PortfolioCreate(PortfolioBase):
+    is_default: bool = False
+
+class PortfolioResponse(PortfolioBase):
+    id: int
+    is_default: bool
+    user_id: int
 
     class Config:
         from_attributes = True
