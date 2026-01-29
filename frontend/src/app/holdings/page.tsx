@@ -68,6 +68,7 @@ const fetchPortfolios = async (): Promise<Portfolio[]> => {
 };
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+const OTHER_COLOR = '#94a3b8';
 
 export default function Holdings() {
   const queryClient = useQueryClient();
@@ -284,7 +285,7 @@ export default function Holdings() {
   const formatCurrency = (value: number | undefined, fromCurrency: 'CAD' | 'USD') => {
     const converted = convertValue(value, fromCurrency);
     const formatted = converted.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return value === undefined || value === null ? '-' : `$${formatted}`;
+    return value === null || value === undefined ? '-' : `$${formatted}`;
   };
 
   const formatPercent = (percent: number | undefined) => {
@@ -293,13 +294,14 @@ export default function Holdings() {
     return <span className={percent >= 0 ? 'text-green-600' : 'text-red-600'}>{formatted}%</span>;
   };
 
-  // Portfolio summaries
+  // Portfolio summaries with "Other" grouping (threshold <8%)
   const portfolioSummaries = useMemo(() => {
     if (!holdings.length || !portfolios.length) return { summaries: [], grandTotal: 0 };
 
     const summaries = portfolios.map(p => {
       const pHoldings = holdings.filter((h: Holding) => h.portfolio_id === p.id);
-      const pieData = pHoldings.map(h => {
+
+      const individualData = pHoldings.map(h => {
         const holdingCurrency = getHoldingCurrency(h.symbol);
         const convertedValue = convertValue(h.market_value, holdingCurrency);
         return {
@@ -308,33 +310,56 @@ export default function Holdings() {
         };
       });
 
-      const total = pieData.reduce((sum: number, item: any) => sum + item.value, 0);
+      const total = individualData.reduce((sum, item) => sum + item.value, 0);
 
-      pieData.forEach((item: any) => {
+      individualData.forEach(item => {
         item.percentage = total > 0 ? (item.value / total) * 100 : 0;
       });
 
-      return { portfolio: p, pieData, total, holdingsCount: pHoldings.length };
+      const sortedLegendData = [...individualData].sort((a, b) => b.value - a.value);
+
+      const largeData = individualData.filter(item => item.percentage >= 8);
+      const smallData = individualData.filter(item => item.percentage < 8);
+
+      let chartData = [...largeData];
+
+      if (smallData.length >= 2) {
+        const otherValue = smallData.reduce((sum, item) => sum + item.value, 0);
+        const otherPercentage = total > 0 ? (otherValue / total) * 100 : 0;
+        chartData.push({
+          name: 'Other',
+          value: otherValue,
+          percentage: otherPercentage,
+        });
+      }
+
+      return {
+        portfolio: p,
+        chartData,
+        legendData: sortedLegendData,
+        total,
+        holdingsCount: pHoldings.length,
+      };
     }).filter(s => s.holdingsCount > 0);
 
-    const grandTotal = summaries.reduce((sum: number, s) => sum + s.total, 0);
+    const grandTotal = summaries.reduce((sum, s) => sum + s.total, 0);
 
     return { summaries, grandTotal };
   }, [holdings, portfolios, displayCurrency, exchangeRate]);
 
-  // Custom external label with rounded dark grey box and white text
+  // Custom label: show for >=8% or "Other"
   const renderCustomLabel = (props: any) => {
     const { cx, cy, midAngle, outerRadius, percentage, name } = props;
     const RADIAN = Math.PI / 180;
-    const radius = outerRadius + 20; // Position outside
+
+    if (percentage < 8 && name !== 'Other') return null;
+
+    const radius = outerRadius + 30;
     const x = cx + radius * Math.cos(-midAngle * RADIAN);
     const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
-    if (percentage < 5) return null; // Hide small slices
-
     return (
       <g>
-        {/* Line from slice to label */}
         <line
           x1={cx + outerRadius * Math.cos(-midAngle * RADIAN)}
           y1={cy + outerRadius * Math.sin(-midAngle * RADIAN)}
@@ -344,26 +369,24 @@ export default function Holdings() {
           strokeWidth={2}
         />
 
-        {/* Rounded box */}
         <rect
-          x={x - 55}
-          y={y - 16}
-          width={110}
-          height={32}
-          rx={16}
-          ry={16}
+          x={x - 45}
+          y={y - 12}
+          width={90}
+          height={24}
+          rx={12}
+          ry={12}
           fill="#1f2937"
           opacity={0.95}
         />
 
-        {/* White text */}
         <text
           x={x}
           y={y}
           fill="white"
           textAnchor="middle"
           dominantBaseline="central"
-          className="text-xs font-medium"
+          className="text-[11px] font-bold font-sans"
         >
           {`${name} ${percentage.toFixed(1)}%`}
         </text>
@@ -406,7 +429,7 @@ export default function Holdings() {
 
       {/* Portfolio Pies */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {portfolioSummaries.summaries.map(({ portfolio, pieData, total }) => (
+        {portfolioSummaries.summaries.map(({ portfolio, chartData, legendData, total }) => (
           <Card key={portfolio.id}>
             <CardHeader className="relative">
               <CardTitle>{portfolio.name}</CardTitle>
@@ -415,26 +438,45 @@ export default function Holdings() {
               </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <ResponsiveContainer width="100%" height={340}>
+              <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie
-                    data={pieData}
+                    data={chartData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={4}
+                    innerRadius={56}
+                    outerRadius={71}
+                    paddingAngle={0}
                     dataKey="value"
                     label={renderCustomLabel}
                     labelLine={false}
                   >
-                    {pieData.map((entry: any, index: number) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    {chartData.map((entry: any, index: number) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.name === 'Other' ? OTHER_COLOR : COLORS[index % COLORS.length]}
+                      />
                     ))}
                   </Pie>
                   <Tooltip formatter={(value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
                 </PieChart>
               </ResponsiveContainer>
+
+              {/* Compact legend with rounded dark background */}
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {legendData.map((entry: any, index: number) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-1.5 bg-[#1f2937] text-white px-2 py-1 rounded-md text-xs font-medium"
+                  >
+                    <div
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                    />
+                    <span>{entry.name} {entry.percentage.toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         ))}
