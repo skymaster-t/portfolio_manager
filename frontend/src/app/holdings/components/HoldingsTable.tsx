@@ -23,12 +23,14 @@ interface Holding {
   purchase_price: number;
   current_price?: number;
   market_value?: number;
+  daily_change?: number; // per share daily dollar change
   daily_change_percent?: number;
   all_time_gain_loss?: number;
   underlying_details?: {
     symbol: string;
     allocation_percent?: number;
     current_price?: number;
+    daily_change?: number; // per share daily dollar change from FMP "change"
     daily_change_percent?: number;
   }[];
 }
@@ -74,6 +76,72 @@ export function HoldingsTable({
   const hasUnderlyings = (holding: Holding) =>
     holding.type === 'etf' && (holding.underlying_details?.length || 0) > 0;
 
+  // Main holding daily: percent Badge + total position dollar change
+  const formatDailyChange = (holding: Holding) => {
+    if (holding.daily_change_percent === undefined || holding.daily_change === undefined) return '-';
+
+    const totalDollar = holding.daily_change * holding.quantity;
+    const isPositive = totalDollar >= 0;
+    const formattedDollar = currencyFormatter.format(
+      displayCurrency === 'CAD' ? totalDollar * exchangeRate : totalDollar
+    );
+
+    return (
+      <div className="flex items-center gap-2">
+        <Badge variant={isPositive ? 'default' : 'destructive'}>
+          {isPositive ? '+' : ''}{holding.daily_change_percent.toFixed(2)}%
+        </Badge>
+        <span className={isPositive ? 'text-green-600' : 'text-red-600'}>
+          {isPositive ? '+' : ''}{formattedDollar}
+        </span>
+      </div>
+    );
+  };
+
+  // Main all-time G/L: percent Badge + total dollar
+  const formatAllTimeGL = (holding: Holding) => {
+    if (holding.all_time_gain_loss === undefined) return '-';
+
+    const costBasis = holding.quantity * holding.purchase_price;
+    const percent = costBasis > 0 ? (holding.all_time_gain_loss / costBasis) * 100 : 0;
+    const isPositive = percent >= 0;
+    const formattedDollar = currencyFormatter.format(
+      displayCurrency === 'CAD' ? holding.all_time_gain_loss * exchangeRate : holding.all_time_gain_loss
+    );
+
+    return (
+      <div className="flex items-center gap-2">
+        <Badge variant={isPositive ? 'default' : 'destructive'}>
+          {isPositive ? '+' : ''}{percent.toFixed(2)}%
+        </Badge>
+        <span className={isPositive ? 'text-green-600' : 'text-red-600'}>
+          {isPositive ? '+' : ''}{formattedDollar}
+        </span>
+      </div>
+    );
+  };
+
+  // Underlying daily: percent Badge + per share dollar change (FMP "change")
+  const formatUnderlyingDaily = (u: NonNullable<Holding['underlying_details']>[number]) => {
+    if (u.daily_change_percent === undefined || u.daily_change === undefined) return '-';
+
+    const isPositive = u.daily_change >= 0;
+    const formattedDollar = currencyFormatter.format(
+      displayCurrency === 'CAD' ? u.daily_change * exchangeRate : u.daily_change
+    );
+
+    return (
+      <div className="flex items-center gap-2">
+        <Badge variant={isPositive ? 'default' : 'destructive'}>
+          {isPositive ? '+' : ''}{u.daily_change_percent.toFixed(2)}%
+        </Badge>
+        <span className={isPositive ? 'text-green-600' : 'text-red-600'}>
+          {isPositive ? '+' : ''}{formattedDollar}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <Card className="mt-16">
       <CardHeader>
@@ -97,7 +165,6 @@ export function HoldingsTable({
           <TableBody>
             {holdings.map((holding) => (
               <Fragment key={holding.id}>
-                {/* Main row – whole row clickable if has underlyings */}
                 <TableRow
                   className={hasUnderlyings(holding) ? 'cursor-pointer hover:bg-muted/50' : ''}
                   onClick={hasUnderlyings(holding) ? () => onToggleExpand(holding.id) : undefined}
@@ -150,29 +217,8 @@ export function HoldingsTable({
                         )
                       : '-'}
                   </TableCell>
-                  <TableCell>
-                    {holding.daily_change_percent !== undefined ? (
-                      <Badge
-                        variant={
-                          holding.daily_change_percent >= 0 ? 'default' : 'destructive'
-                        }
-                      >
-                        {holding.daily_change_percent >= 0 ? '+' : ''}
-                        {holding.daily_change_percent.toFixed(2)}%
-                      </Badge>
-                    ) : '-'}
-                  </TableCell>
-                  <TableCell
-                    className={holding.all_time_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}
-                  >
-                    {holding.all_time_gain_loss
-                      ? currencyFormatter.format(
-                          displayCurrency === 'CAD'
-                            ? holding.all_time_gain_loss * exchangeRate
-                            : holding.all_time_gain_loss
-                        )
-                      : '-'}
-                  </TableCell>
+                  <TableCell>{formatDailyChange(holding)}</TableCell>
+                  <TableCell>{formatAllTimeGL(holding)}</TableCell>
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <Button
                       size="icon"
@@ -197,57 +243,42 @@ export function HoldingsTable({
                   </TableCell>
                 </TableRow>
 
-                {/* Underlying details row – not clickable */}
-                {hasUnderlyings(holding) &&
-                  expandedHoldings.has(holding.id) && (
-                    <TableRow key={`${holding.id}-underlyings`}>
-                      <TableCell colSpan={9} className="bg-muted/50 p-0">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Underlying</TableHead>
-                              <TableHead>Allocation</TableHead>
-                              <TableHead>Price</TableHead>
-                              <TableHead>Daily ∆</TableHead>
+                {hasUnderlyings(holding) && expandedHoldings.has(holding.id) && (
+                  <TableRow key={`${holding.id}-underlyings`}>
+                    <TableCell colSpan={9} className="bg-muted/50 p-0">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Underlying</TableHead>
+                            <TableHead>Allocation</TableHead>
+                            <TableHead>Price</TableHead>
+                            <TableHead>Daily ∆</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {holding.underlying_details!.map((u) => (
+                            <TableRow key={u.symbol}>
+                              <TableCell className="font-medium">{u.symbol}</TableCell>
+                              <TableCell>
+                                {u.allocation_percent ? `${u.allocation_percent.toFixed(2)}%` : '-'}
+                              </TableCell>
+                              <TableCell>
+                                {u.current_price
+                                  ? currencyFormatter.format(
+                                      displayCurrency === 'CAD'
+                                        ? u.current_price * exchangeRate
+                                        : u.current_price
+                                    )
+                                  : '-'}
+                              </TableCell>
+                              <TableCell>{formatUnderlyingDaily(u)}</TableCell>
                             </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {holding.underlying_details!.map((u) => (
-                              <TableRow key={u.symbol}>
-                                <TableCell className="font-medium">{u.symbol}</TableCell>
-                                <TableCell>
-                                  {u.allocation_percent
-                                    ? `${u.allocation_percent.toFixed(2)}%`
-                                    : '-'}
-                                </TableCell>
-                                <TableCell>
-                                  {u.current_price
-                                    ? currencyFormatter.format(
-                                        displayCurrency === 'CAD'
-                                          ? u.current_price * exchangeRate
-                                          : u.current_price
-                                      )
-                                    : '-'}
-                                </TableCell>
-                                <TableCell>
-                                  {u.daily_change_percent !== undefined ? (
-                                    <Badge
-                                      variant={
-                                        u.daily_change_percent >= 0 ? 'default' : 'destructive'
-                                      }
-                                    >
-                                      {u.daily_change_percent >= 0 ? '+' : ''}
-                                      {u.daily_change_percent.toFixed(2)}%
-                                    </Badge>
-                                  ) : '-'}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableCell>
-                    </TableRow>
-                  )}
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableCell>
+                  </TableRow>
+                )}
               </Fragment>
             ))}
           </TableBody>

@@ -16,17 +16,12 @@ router = APIRouter(prefix="/holdings", tags=["holdings"])
 @router.get("/", response_model=List[HoldingResponse])
 def get_holdings(db: Session = Depends(get_db)):
     holdings = db.query(Holding).all()
-    
-    logger.info(f"Fetched {len(holdings)} holdings from DB")
-    
+   
     for holding in holdings:
         if holding.type.value == "etf":  # FIX: use .value for enum comparison
-            logger.info(f"Processing ETF {holding.symbol} (ID: {holding.id}) with {len(holding.underlyings)} underlyings")
             holding.underlying_details = []
             for u in holding.underlyings:
-                logger.info(f"Underlying: symbol={u.symbol}, allocation_percent={u.allocation_percent}")
                 price_data = fetch_price_data(u.symbol)
-                logger.info(f"FMP price data for {u.symbol}: {price_data}")
                 holding.underlying_details.append(UnderlyingDetail(
                     symbol=u.symbol,
                     allocation_percent=u.allocation_percent,
@@ -43,10 +38,8 @@ def get_holding(holding_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Holding not found")
     
     if holding.type.value == "etf":  # FIX: use .value
-        logger.info(f"Processing single ETF {holding.symbol} (ID: {holding.id}) with {len(holding.underlyings)} underlyings")
         holding.underlying_details = []
         for u in holding.underlyings:
-            logger.info(f"Underlying: symbol={u.symbol}, allocation_percent={u.allocation_percent}")
             price_data = fetch_price_data(u.symbol)
             holding.underlying_details.append(UnderlyingDetail(
                 symbol=u.symbol,
@@ -59,7 +52,6 @@ def get_holding(holding_id: int, db: Session = Depends(get_db)):
 
 @router.post("/", response_model=HoldingResponse, status_code=status.HTTP_201_CREATED)
 def create_holding(holding_data: HoldingCreate, db: Session = Depends(get_db)):
-    logger.info(f"Creating holding: {holding_data.dict()}")
     
     portfolio = db.query(Portfolio).filter(Portfolio.id == holding_data.portfolio_id).first()
     if not portfolio:
@@ -91,9 +83,7 @@ def create_holding(holding_data: HoldingCreate, db: Session = Depends(get_db)):
     db.refresh(new_holding)
 
     if holding_data.type == "etf" and holding_data.underlyings:  # holding_data.type is string enum from Pydantic
-        logger.info(f"Saving {len(holding_data.underlyings)} underlyings for new holding {new_holding.id}")
         for u in holding_data.underlyings:
-            logger.info(f"Saving underlying: symbol={u.symbol}, allocation_percent={u.allocation_percent}")
             underlying = UnderlyingHolding(
                 symbol=u.symbol.upper(),
                 allocation_percent=u.allocation_percent,
@@ -105,9 +95,7 @@ def create_holding(holding_data: HoldingCreate, db: Session = Depends(get_db)):
     return new_holding
 
 @router.put("/{holding_id}", response_model=HoldingResponse)
-def update_holding(holding_id: int, holding_data: HoldingUpdate, db: Session = Depends(get_db)):
-    logger.info(f"Updating holding ID {holding_id} with data: {holding_data.dict(exclude_unset=True)}")
-    
+def update_holding(holding_id: int, holding_data: HoldingUpdate, db: Session = Depends(get_db)):    
     holding = db.query(Holding).filter(Holding.id == holding_id).first()
     if not holding:
         raise HTTPException(status_code=404, detail="Holding not found")
@@ -141,10 +129,8 @@ def update_holding(holding_id: int, holding_data: HoldingUpdate, db: Session = D
 
     if holding.type.value == "etf":  # FIX: use .value here too
         if "underlyings" in update_dict:
-            logger.info(f"Replacing underlyings for holding {holding.id}")
             db.query(UnderlyingHolding).filter(UnderlyingHolding.holding_id == holding.id).delete()
             for u in (holding_data.underlyings or []):
-                logger.info(f"Saving updated underlying: symbol={u.symbol}, allocation_percent={u.allocation_percent}")
                 underlying = UnderlyingHolding(
                     symbol=u.symbol.upper(),
                     allocation_percent=u.allocation_percent,

@@ -21,7 +21,8 @@ class Portfolio(Base):
     __tablename__ = "portfolios"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
-    is_default = Column(Boolean, default=False)  # New field
+    is_default = Column(Boolean, default=False)
+    display_order = Column(Integer, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"))
 
     user = relationship("User", back_populates="portfolios")

@@ -1,8 +1,11 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query'; // ← Added
+import { toast } from 'sonner'; // ← Added
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Briefcase, Plus } from 'lucide-react';
+import axios from 'axios';
 import {
   DndContext,
   closestCenter,
@@ -37,8 +40,6 @@ interface Props {
   onSelectPortfolio: (id: number) => void;
   onEditPortfolio: (p: PortfolioWithData) => void;
   onDeletePortfolio: (p: PortfolioWithData) => void;
-  order: number[];
-  setOrder: (order: number[]) => void;
   activeId: number | null;
   setActiveId: (id: number | null) => void;
   currencyFormatter: Intl.NumberFormat;
@@ -53,8 +54,6 @@ export function PortfolioGrid({
   onSelectPortfolio,
   onEditPortfolio,
   onDeletePortfolio,
-  order,
-  setOrder,
   activeId,
   setActiveId,
   currencyFormatter,
@@ -62,22 +61,29 @@ export function PortfolioGrid({
   exchangeRate,
   onCreateFirstPortfolio,
 }: Props) {
+  const queryClient = useQueryClient(); // ← Added
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(event.active.id as number);
-  const handleDragEnd = (event: DragEndEvent) => {
+
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setOrder((current) => {
-        const oldIndex = current.indexOf(active.id as number);
-        const newIndex = current.indexOf(over.id as number);
-        const newOrder = arrayMove(current, oldIndex, newIndex);
-        localStorage.setItem('portfolioOrder', JSON.stringify(newOrder));
-        return newOrder;
-      });
+      const oldIndex = portfoliosWithData.findIndex(p => p.id === active.id);
+      const newIndex = portfoliosWithData.findIndex(p => p.id === over.id);
+      const newOrder = arrayMove(portfoliosWithData, oldIndex, newIndex).map(p => p.id);
+
+      try {
+        await axios.post('http://localhost:8000/portfolios/reorder', { order: newOrder });
+        queryClient.invalidateQueries({ queryKey: ['portfolios'] });
+      } catch (err) {
+        toast.error('Failed to save order');
+        console.error(err);
+      }
     }
     setActiveId(null);
   };
@@ -99,7 +105,7 @@ export function PortfolioGrid({
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <SortableContext items={order} strategy={rectSortingStrategy}>
+      <SortableContext items={portfoliosWithData.map(p => p.id)} strategy={rectSortingStrategy}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {portfoliosWithData.map((port) => (
             <SortablePortfolioCard

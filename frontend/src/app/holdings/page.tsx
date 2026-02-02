@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,6 +48,8 @@ const fetchPortfolios = async (): Promise<Portfolio[]> => {
 };
 
 export default function Holdings() {
+  const queryClient = useQueryClient();
+
   const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [exchangeRate, setExchangeRate] = useState(1.37);
 
@@ -60,7 +62,6 @@ export default function Holdings() {
   const [openHoldingDelete, setOpenHoldingDelete] = useState(false);
   const [openPortfolioDelete, setOpenPortfolioDelete] = useState(false);
 
-  const [order, setOrder] = useState<number[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [expandedHoldings, setExpandedHoldings] = useState<Set<number>>(new Set());
 
@@ -98,29 +99,6 @@ export default function Holdings() {
     const interval = setInterval(fetchRate, 3600000);
     return () => clearInterval(interval);
   }, []);
-
-  // Load saved order from localStorage on mount
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem('portfolioOrder');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.every((id: any) => typeof id === number)) {
-          setOrder(parsed);
-        }
-      } catch {}
-    }
-  }, []);
-
-  // If no saved order and portfolios are loaded, initialize with default order and save it
-  useEffect(() => {
-    if (order.length === 0 && portfolios.length > 0) {
-      const defaultOrder = portfolios.map(p => p.id);
-      setOrder(defaultOrder);
-      localStorage.setItem('portfolioOrder', JSON.stringify(defaultOrder));
-    }
-  }, [portfolios.length, order.length]);
 
   // Default portfolio selection
   useEffect(() => {
@@ -185,20 +163,9 @@ export default function Holdings() {
     };
   }, [holdings]);
 
+  // portfoliosWithData – uses server-ordered portfolios directly
   const portfoliosWithData = useMemo(() => {
-    // Use saved user order for existing portfolios
-    const orderedIds = order.filter((id) => portfolios.some((p) => p.id === id));
-    const ordered = orderedIds
-      .map((id) => portfolios.find((p) => p.id === id))
-      .filter(Boolean) as Portfolio[];
-
-    // Append any new portfolios at the end (user can drag them later)
-    const allOrdered = [
-      ...ordered,
-      ...portfolios.filter((p) => !orderedIds.includes(p.id)),
-    ];
-
-    return allOrdered.map((port) => {
+    return portfolios.map((port) => {
       const portHoldings = holdings.filter((h) => h.portfolio_id === port.id);
       const totalValue = portHoldings.reduce((s, h) => s + (h.market_value || 0), 0);
       const totalCost = portHoldings.reduce((s, h) => s + h.quantity * h.purchase_price, 0);
@@ -224,7 +191,7 @@ export default function Holdings() {
         pieData: pie 
       };
     });
-  }, [portfolios, holdings, order]);
+  }, [portfolios, holdings]);
 
   const selectedPortfolioHoldings = useMemo(
     () => holdings.filter((h) => h.portfolio_id === selectedPortfolioId),
@@ -296,8 +263,6 @@ export default function Holdings() {
           setSelectedPortfolio(p);
           setOpenPortfolioDelete(true);
         }}
-        order={order}
-        setOrder={setOrder}
         activeId={activeId}
         setActiveId={setActiveId}
         currencyFormatter={currencyFormatter}
@@ -306,6 +271,14 @@ export default function Holdings() {
         onCreateFirstPortfolio={() => {
           setSelectedPortfolio(null);
           setOpenPortfolioForm(true);
+        }}
+        onReorder={async (newOrder: number[]) => {
+          try {
+            await axios.post('http://localhost:8000/portfolios/reorder', { order: newOrder });
+            queryClient.invalidateQueries({ queryKey: ['portfolios'] });
+          } catch (err) {
+            toast.error('Failed to save order');
+          }
         }}
       />
 

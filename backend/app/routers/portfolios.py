@@ -1,16 +1,21 @@
-# backend/app/routers/portfolios.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Portfolio, Holding, UnderlyingHolding  # ← Added UnderlyingHolding import
+from app.models import Portfolio, Holding
 from app.schemas import PortfolioCreate, PortfolioResponse
 from typing import List
+from pydantic import BaseModel
+
+class ReorderRequest(BaseModel):
+    order: List[int]
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
 @router.get("/", response_model=List[PortfolioResponse])
 def get_portfolios(db: Session = Depends(get_db)):
-    return db.query(Portfolio).all()
+    return db.query(Portfolio)\
+             .order_by(Portfolio.display_order.asc().nulls_last(), Portfolio.id.asc())\
+             .all()
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
 def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_db)):
@@ -27,7 +32,7 @@ def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_
     new_portfolio = Portfolio(
         name=portfolio_data.name,
         is_default=portfolio_data.is_default,
-        user_id=1  # Hardcoded default user for now
+        user_id=1  # TODO:Hardcoded default user for now
     )
     db.add(new_portfolio)
     db.commit()
@@ -81,3 +86,14 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
     db.delete(portfolio)
     db.commit()
     return None
+
+@router.post("/reorder")
+def reorder_portfolios(request: ReorderRequest, db: Session = Depends(get_db)):
+    order = request.order
+    for index, portfolio_id in enumerate(order):
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        if not portfolio:
+            raise HTTPException(status_code=404, detail=f"Portfolio {portfolio_id} not found")
+        portfolio.display_order = index
+    db.commit()
+    return {"detail": "Order updated successfully"}
