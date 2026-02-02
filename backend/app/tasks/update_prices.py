@@ -1,58 +1,97 @@
 # backend/app/tasks/update_prices.py
-from app.celery_config import celery_app
+from sqlalchemy.orm import Session, joinedload
 from app.database import SessionLocal
-from app.models import Holding, Portfolio
-from app.utils.fmp import fetch_price_data
+from app.models import Holding
+from app.utils.yahoo import batch_fetch_prices
+from app.celery import celery_app
 import logging
+import pytz
+from datetime import datetime
+import holidays
 
 logger = logging.getLogger(__name__)
 
-@celery_app.task(name="app.tasks.update_all_prices")
-def update_all_prices():
-    db = SessionLocal()
+celery = celery_app
+
+def is_market_open() -> bool:
+    tz = pytz.timezone("America/Toronto")
+    now = datetime.now(tz)
+
+    if now.weekday() >= 5:
+        logger.info("Market closed: Weekend")
+        return False
+
+    market_open_min = 9 * 60 + 30
+    market_close_min = 16 * 60
+    current_min = now.hour * 60 + now.minute
+
+    if current_min < market_open_min or current_min > market_close_min:
+        logger.info(f"Market closed: Outside trading hours ({now.strftime('%H:%M')})")
+        return False
+
+    ca_holidays = holidays.CA(prov="ON", years=now.year)
+    us_holidays = holidays.US(years=now.year)
+    combined_holidays = ca_holidays | us_holidays
+
+    if now.date() in combined_holidays:
+        holiday_name = combined_holidays.get(now.date(), "Unknown holiday")
+        logger.info(f"Market closed: Holiday - {holiday_name}")
+        return False
+
+    return True
+
+@celery.task(bind=True, name="app.tasks.update_prices.update_all_prices")
+def update_all_prices(self, force: bool = False):
+    if not force and not is_market_open():
+        logger.info("CELERY TASK SKIPPED: Market is closed (use force=True to override)")
+        return "Skipped: Market is closed"
+
+    db: Session = SessionLocal()
     try:
-        portfolio = db.query(Portfolio).first()
-        if not portfolio:
-            logger.warning("No default portfolio found for price updates")
-            return
+        holdings = db.query(Holding).options(joinedload(Holding.underlyings)).all()
+        if not holdings:
+            logger.info("CELERY TASK: No holdings found - nothing to update")
+            return "No holdings"
 
-        holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
-        updated = 0
+        # Log existing DB prices
         for h in holdings:
-            try:
-                price_data = fetch_price_data(h.symbol)
+            logger.debug(f"DB BEFORE {h.symbol}: price={h.current_price}, last_update={h.last_price_update}")
 
-                # Debug Log
-                logger.info(f"Fetched price_data for {h.symbol}: {price_data}")
-                
-                current_price = price_data.get("price")
-                if current_price is None:
-                    logger.warning(f"No price data for {h.symbol} — skipping update")
-                    continue
+        main_symbols = {h.symbol for h in holdings}
+        underlying_symbols = {u.symbol for h in holdings for u in h.underlyings}
+        all_symbols = list(main_symbols.union(underlying_symbols))
 
-                # Daily values from FMP
-                h.daily_change = price_data.get("change")
-                h.daily_change_percent = price_data.get("change_percent")
+        logger.info(f"CELERY TASK: Fetching prices for {len(all_symbols)} symbols (force={force})")
+        price_map = batch_fetch_prices(all_symbols)
 
-                # Current price and market value
-                h.current_price = current_price
-                h.market_value = current_price * h.quantity
+        updated_count = 0
+        now = datetime.utcnow()
+        for holding in holdings:
+            data = price_map.get(holding.symbol, {})
+            price = data.get("price")
+            if price is not None:
+                old_price = holding.current_price
+                holding.current_price = price
+                holding.daily_change = data.get("change")
+                holding.daily_change_percent = data.get("change_percent")
+                holding.market_value = price * holding.quantity
+                holding.all_time_gain_loss = (price - holding.purchase_price) * holding.quantity
+                holding.all_time_change_percent = (
+                    (price - holding.purchase_price) / holding.purchase_price * 100
+                    if holding.purchase_price != 0 else None
+                )
+                holding.last_price_update = now
+                updated_count += 1
+                logger.info(f"DB UPDATED {holding.symbol}: {old_price} → {price} (last_update={now})")
 
-                # All-time calculations (from purchase to current)
-                if h.purchase_price and h.purchase_price != 0:
-                    h.all_time_change_percent = ((current_price - h.purchase_price) / h.purchase_price) * 100
-                    h.all_time_gain_loss = (current_price - h.purchase_price) * h.quantity
-                else:
-                    h.all_time_change_percent = None
-                    h.all_time_gain_loss = None
-
-                updated += 1
-            except Exception as e:
-                logger.error(f"Failed to update {h.symbol}: {str(e)}")
         db.commit()
-        logger.info(f"Price update complete: {updated} holdings updated")
+        logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings in DB")
+        return f"Updated {updated_count} holdings"
+
     except Exception as e:
-        logger.error(f"Price update task failed: {str(e)}")
         db.rollback()
+        logger.error(f"CELERY TASK FAILED: {e}", exc_info=True)
+        raise self.retry(countdown=60, max_retries=3)
     finally:
         db.close()
+        

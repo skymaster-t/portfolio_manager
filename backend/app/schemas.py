@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from enum import Enum
+from datetime import datetime
 
 class HoldingType(str, Enum):
     stock = "stock"
@@ -15,6 +16,7 @@ class UnderlyingCreate(BaseModel):
 
 class Underlying(UnderlyingBase):
     id: int
+    allocation_percent: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -57,6 +59,8 @@ class HoldingResponse(HoldingBase):
     # Daily from FMP
     daily_change: Optional[float] = None
     daily_change_percent: Optional[float] = None
+
+    last_price_update: Optional[datetime] = None
     
     underlyings: List[Underlying] = []
     underlying_details: List[UnderlyingDetail] = []

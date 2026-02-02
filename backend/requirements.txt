@@ -160,3 +160,6 @@ websockets==16.0
 yarl==1.22.0
 zipp==3.23.0
 zstandard==0.25.0
+pytz>=2024.1
+holidays>=0.41
+yfinance>=0.2.40

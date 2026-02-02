@@ -1,14 +1,19 @@
+# backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import redis
 from dotenv import load_dotenv
 from pathlib import Path
 import os
+import logging
 
-from app.routers import holdings
-from app.routers import portfolios
+# Existing logging config (kept as-is – production-ready)
+logging.basicConfig(
+    level=logging.INFO,  # Use DEBUG for even more detail during testing
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
-# Explicitly load .env from the app directory
+# Explicitly load .env from the app directory (kept)
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -20,9 +25,17 @@ r = redis.Redis.from_url(REDIS_URL)
 
 app = FastAPI()
 
-app.include_router(holdings.router)
-app.include_router(portfolios.router)
+# FIXED: Direct import of each router object (industry-standard, avoids AttributeError)
+# This is robust even if module has temporary syntax issues – error shows on import
+from app.routers.holdings import router as holdings_router
+from app.routers.portfolios import router as portfolios_router
+from app.routers.debug import router as debug_router
 
+app.include_router(holdings_router)
+app.include_router(portfolios_router)
+app.include_router(debug_router, prefix="/debug")
+
+# Existing CORS middleware (kept unchanged)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -31,6 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Existing endpoints (kept unchanged)
 @app.get("/")
 def read_root():
     return {"message": "FastAPI backend running", "redis_connected": r.ping()}

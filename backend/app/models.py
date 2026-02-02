@@ -1,7 +1,8 @@
 # backend/app/models.py
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Enum, Table, Boolean
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Enum, Table, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from app.database import Base
+from datetime import datetime
 import enum
 
 class HoldingType(enum.Enum):
@@ -50,6 +51,7 @@ class Holding(Base):
 
     portfolio = relationship("Portfolio", back_populates="holdings")
     underlyings = relationship("UnderlyingHolding", back_populates="holding")
+    last_price_update: datetime = Column(DateTime, nullable=True)
 
 class UnderlyingHolding(Base):
     __tablename__ = "underlying_holdings"
