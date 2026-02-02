@@ -177,13 +177,12 @@ export default function Holdings() {
     queryFn: fetchPortfolios,
   });
 
-  // Toast on fetch errors
   useEffect(() => {
     if (holdingsError) {
-      toast.error(`Failed to load holdings: ${(holdingsErrorObj as any)?.message || 'Unknown error'}`);
+      toast.error(`Failed to load holdings: ${(holdingsErrorObj as any)?.message || 'Check backend'}`);
     }
     if (portfoliosError) {
-      toast.error(`Failed to load portfolios: ${(portfoliosErrorObj as any)?.message || 'Unknown error'}`);
+      toast.error(`Failed to load portfolios: ${(portfoliosErrorObj as any)?.message || 'Check backend'}`);
     }
   }, [holdingsError, portfoliosError, holdingsErrorObj, portfoliosErrorObj]);
 
@@ -726,9 +725,13 @@ export default function Holdings() {
                       >
                         <TableCell className="font-medium">{portfolio?.name || 'Unknown'}</TableCell>
                         <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between w-full">
+                            <span>{h.symbol}</span>
                             {hasUnderlyings && (
-                              <>
+                              <div className="flex items-center gap-2">
+                                <div className="bg-black text-white rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold">
+                                  {underlyingCount}
+                                </div>
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -740,12 +743,8 @@ export default function Holdings() {
                                 >
                                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </Button>
-                                <Badge variant="outline">
-                                  {underlyingCount} underlying{underlyingCount > 1 ? 's' : ''}
-                                </Badge>
-                              </>
+                              </div>
                             )}
-                            {h.symbol}
                           </div>
                         </TableCell>
                         <TableCell><Badge variant={h.type === 'etf' ? 'default' : 'secondary'}>{h.type.toUpperCase()}</Badge></TableCell>
@@ -822,88 +821,92 @@ export default function Holdings() {
 
       {/* ==================== ADD / EDIT HOLDING DIALOG ==================== */}
       <Dialog open={openHoldingForm} onOpenChange={setOpenHoldingForm}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{selectedHolding ? 'Edit Holding' : 'Add Holding'}</DialogTitle>
+        <DialogContent className="max-w-4xl rounded-2xl shadow-2xl bg-card">
+          <DialogHeader className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
+            <DialogTitle className="text-3xl font-bold">{selectedHolding ? 'Edit Holding' : 'Add Holding'}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="portfolio" className="md:text-right">Portfolio</Label>
-              <Select value={selectedPortfolioId?.toString()} onValueChange={v => setSelectedPortfolioId(Number(v))}>
-                <SelectTrigger id="portfolio" className="col-span-1 md:col-span-3">
-                  <SelectValue placeholder="Select a portfolio" />
-                </SelectTrigger>
-                <SelectContent>
-                  {portfolios.map(p => (
-                    <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid gap-8 -mt-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="portfolio" className="text-base font-medium">Portfolio</Label>
+                <Select value={selectedPortfolioId?.toString()} onValueChange={v => setSelectedPortfolioId(Number(v))}>
+                  <SelectTrigger id="portfolio">
+                    <SelectValue placeholder="Select a portfolio" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {portfolios.map(p => (
+                      <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="symbol" className="md:text-right">Symbol</Label>
-              <Input id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} className="col-span-1 md:col-span-3" placeholder="e.g. VOO or VOO.TO" />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="symbol" className="text-base font-medium">Symbol</Label>
+                <Input id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. VOO or VOO.TO" />
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="type" className="md:text-right">Type</Label>
-              <Select value={type_} onValueChange={v => setType(v as 'etf' | 'stock')}>
-                <SelectTrigger id="type" className="col-span-1 md:col-span-3">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="etf">ETF</SelectItem>
-                  <SelectItem value="stock">Stock</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="type" className="text-base font-medium">Type</Label>
+                <Select value={type_} onValueChange={v => setType(v as 'etf' | 'stock')}>
+                  <SelectTrigger id="type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="etf">ETF</SelectItem>
+                    <SelectItem value="stock">Stock</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="quantity" className="md:text-right">Quantity</Label>
-              <Input id="quantity" type="number" step="any" value={quantity} onChange={e => setQuantity(e.target.value)} className="col-span-1 md:col-span-3" />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="quantity" className="text-base font-medium">Quantity</Label>
+                <Input id="quantity" type="number" step="any" value={quantity} onChange={e => setQuantity(e.target.value)} />
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="purchasePrice" className="md:text-right">Purchase Price</Label>
-              <Input id="purchasePrice" type="number" step="any" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="col-span-1 md:col-span-3" />
+              <div className="space-y-2">
+                <Label htmlFor="purchasePrice" className="text-base font-medium">Purchase Price</Label>
+                <Input id="purchasePrice" type="number" step="any" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} />
+              </div>
             </div>
 
             {type_ === 'etf' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Label>Underlying Holdings (Allocation %)</Label>
-                  <Button size="sm" onClick={addTempUnderlying}>
+              <div className="space-y-6">
+                <div className="flex items-center justify-between pb-4 border-b border-border">
+                  <Label className="text-lg font-semibold">Underlying Holdings (Allocation %)</Label>
+                  <Button onClick={addTempUnderlying} variant="secondary">
                     <Plus className="h-4 w-4 mr-2" />
                     Add Underlying
                   </Button>
                 </div>
                 {tempUnderlyings.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">No underlyings added yet</p>
+                  <p className="text-center text-muted-foreground py-8">No underlyings added yet</p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {tempUnderlyings.map(u => (
-                      <div key={u.tempId} className="flex gap-3 items-center">
+                      <div key={u.tempId} className="flex gap-4 items-center p-4 rounded-lg border bg-muted/30">
                         <Input placeholder="Symbol e.g. AAPL" value={u.symbol} onChange={e => updateTempUnderlying(u.tempId, 'symbol', e.target.value)} className="flex-1" />
-                        <Input type="number" step="0.01" placeholder="Allocation %" value={u.allocation_percent} onChange={e => updateTempUnderlying(u.tempId, 'allocation_percent', e.target.value)} className="w-32" />
-                        <Button size="icon" variant="ghost" onClick={() => removeTempUnderlying(u.tempId)}>
+                        <Input type="number" step="0.01" placeholder="Allocation %" value={u.allocation_percent} onChange={e => updateTempUnderlying(u.tempId, 'allocation_percent', e.target.value)} className="w-40" />
+                        <Button size="icon" variant="destructive" onClick={() => removeTempUnderlying(u.tempId)}>
                           <X className="h-4 w-4" />
                         </Button>
                       </div>
                     ))}
-                    <p className="text-sm text-muted-foreground">
-                      Total: {tempUnderlyings.reduce((s, u) => s + parseFloat(u.allocation_percent || '0'), 0).toFixed(2)}%
-                    </p>
+                    <div className="flex justify-end">
+                      <p className="text-lg font-medium">
+                        Total Allocation: {tempUnderlyings.reduce((s, u) => s + parseFloat(u.allocation_percent || '0'), 0).toFixed(2)}%
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-8 pt-6 border-t border-border">
             <Button variant="outline" onClick={() => setOpenHoldingForm(false)}>Cancel</Button>
             <Button onClick={handleHoldingSubmit} disabled={addHoldingMutation.isPending || updateHoldingMutation.isPending}>
               {(addHoldingMutation.isPending || updateHoldingMutation.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save
+              Save Holding
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -911,29 +914,27 @@ export default function Holdings() {
 
       {/* ==================== ADD / EDIT PORTFOLIO DIALOG ==================== */}
       <Dialog open={openPortfolioDialog} onOpenChange={setOpenPortfolioDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{selectedPortfolio ? 'Edit Portfolio' : 'Add Portfolio'}</DialogTitle>
+        <DialogContent className="max-w-lg rounded-2xl shadow-2xl bg-card">
+          <DialogHeader className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
+            <DialogTitle className="text-3xl font-bold">{selectedPortfolio ? 'Edit Portfolio' : 'Add Portfolio'}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="portfolio-name" className="md:text-right">Name</Label>
-              <Input id="portfolio-name" value={portfolioName} onChange={e => setPortfolioName(e.target.value)} className="col-span-1 md:col-span-3" />
+          <div className="grid gap-8">
+            <div className="space-y-2">
+              <Label htmlFor="portfolio-name" className="text-base font-medium">Portfolio Name</Label>
+              <Input id="portfolio-name" value={portfolioName} onChange={e => setPortfolioName(e.target.value)} placeholder="e.g. Growth Portfolio" className="text-lg" />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 items-center gap-4">
-              <Label htmlFor="default" className="md:text-right">Default</Label>
-              <div className="flex items-center h-10 col-span-1 md:col-span-3">
-                <Checkbox id="default" checked={portfolioDefault} onCheckedChange={checked => setPortfolioDefault(!!checked)} />
-              </div>
+            <div className="flex items-center space-x-3">
+              <Checkbox id="default" checked={portfolioDefault} onCheckedChange={checked => setPortfolioDefault(!!checked)} />
+              <Label htmlFor="default" className="text-base font-medium cursor-pointer">Set as default portfolio</Label>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-8 pt-6 border-t border-border">
             {selectedPortfolio && (
               <Button variant="destructive" onClick={() => setOpenPortfolioDeleteConfirm(true)}>Delete Portfolio</Button>
             )}
-            <div className="flex gap-2 ml-auto">
+            <div className="flex gap-3 ml-auto">
               <Button variant="outline" onClick={() => setOpenPortfolioDialog(false)}>Cancel</Button>
-              <Button onClick={handlePortfolioSubmit}>Save</Button>
+              <Button onClick={handlePortfolioSubmit}>Save Portfolio</Button>
             </div>
           </DialogFooter>
         </DialogContent>
@@ -941,27 +942,29 @@ export default function Holdings() {
 
       {/* ==================== PORTFOLIO DELETE CONFIRMATION ==================== */}
       <Dialog open={openPortfolioDeleteConfirm} onOpenChange={setOpenPortfolioDeleteConfirm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Portfolio</DialogTitle>
+        <DialogContent className="max-w-md rounded-2xl shadow-2xl bg-card">
+          <DialogHeader className="bg-gradient-to-r from-red-600 to-pink-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
+            <DialogTitle className="text-3xl font-bold">Delete Portfolio</DialogTitle>
           </DialogHeader>
-          {selectedPortfolio && (
-            <>
-              <p>Are you sure you want to delete "<strong>{selectedPortfolio.name}</strong>"?</p>
-              {(() => {
-                const count = holdings.filter(h => h.portfolio_id === selectedPortfolio.id).length;
-                return count > 0 ? (
-                  <p className="text-red-600 mt-4 font-medium">
-                    This will <strong>permanently delete</strong> the portfolio and all <strong>{count}</strong> holdings it contains.
-                    This cannot be undone.
-                  </p>
-                ) : (
-                  <p className="text-muted-foreground mt-4">This portfolio currently has no holdings.</p>
-                );
-              })()}
-            </>
-          )}
-          <DialogFooter>
+          <div className="py-6">
+            {selectedPortfolio && (
+              <>
+                <p className="text-lg mb-4">Are you sure you want to delete "<strong>{selectedPortfolio.name}</strong>"?</p>
+                {(() => {
+                  const count = holdings.filter(h => h.portfolio_id === selectedPortfolio.id).length;
+                  return count > 0 ? (
+                    <p className="text-destructive font-medium">
+                      This will <strong>permanently delete</strong> the portfolio and all <strong>{count}</strong> holdings it contains.
+                      This action cannot be undone.
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground">This portfolio currently has no holdings.</p>
+                  );
+                })()}
+              </>
+            )}
+          </div>
+          <DialogFooter className="mt-6 pt-6 border-t border-border">
             <Button variant="outline" onClick={() => setOpenPortfolioDeleteConfirm(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => deletePortfolioMutation.mutate(selectedPortfolio!.id)} disabled={deletePortfolioMutation.isPending}>
               {deletePortfolioMutation.isPending ? (
@@ -969,7 +972,7 @@ export default function Holdings() {
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Deleting...
                 </>
-              ) : 'Delete Portfolio'}
+              ) : 'Confirm Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -977,17 +980,20 @@ export default function Holdings() {
 
       {/* Delete Holding Confirmation */}
       <Dialog open={openDelete} onOpenChange={setOpenDelete}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Holding</DialogTitle>
+        <DialogContent className="max-w-md rounded-2xl shadow-2xl bg-card">
+          <DialogHeader className="bg-gradient-to-r from-red-600 to-pink-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
+            <DialogTitle className="text-3xl font-bold">Delete Holding</DialogTitle>
           </DialogHeader>
-          <p>Are you sure you want to delete {selectedHolding?.symbol}? This cannot be undone.</p>
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="py-6">
+            <p className="text-lg">Are you sure you want to delete <strong>{selectedHolding?.symbol}</strong>?</p>
+            <p className="text-destructive mt-4 font-medium">This action cannot be undone.</p>
+          </div>
+          <DialogFooter className="mt-6 pt-6 border-t border-border">
             <Button variant="outline" onClick={() => setOpenDelete(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => selectedHolding && deleteMutation.mutate(selectedHolding.id)}>
-              {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Delete'}
+              {deleteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Delete Holding'}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
