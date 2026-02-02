@@ -9,14 +9,22 @@ class HoldingType(str, Enum):
 class UnderlyingBase(BaseModel):
     symbol: str
 
-class UnderlyingCreate(UnderlyingBase):
-    pass
+class UnderlyingCreate(BaseModel):
+    symbol: str
+    allocation_percent: Optional[float] = None
 
 class Underlying(UnderlyingBase):
     id: int
 
     class Config:
         from_attributes = True
+
+class UnderlyingDetail(BaseModel):
+    symbol: str
+    allocation_percent: Optional[float] = None
+    current_price: Optional[float] = None
+    daily_change: Optional[float] = None
+    daily_change_percent: Optional[float] = None
 
 class HoldingBase(BaseModel):
     symbol: str
@@ -51,6 +59,7 @@ class HoldingResponse(HoldingBase):
     daily_change_percent: Optional[float] = None
     
     underlyings: List[Underlying] = []
+    underlying_details: List[UnderlyingDetail] = []
 
     class Config:
         from_attributes = True

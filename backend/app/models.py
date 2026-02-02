@@ -54,6 +54,7 @@ class UnderlyingHolding(Base):
     __tablename__ = "underlying_holdings"
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String)
+    allocation_percent = Column(Float, nullable=True)  # NEW
     holding_id = Column(Integer, ForeignKey("holdings.id"))
 
     holding = relationship("Holding", back_populates="underlyings")
