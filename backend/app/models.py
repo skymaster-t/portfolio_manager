@@ -55,6 +55,6 @@ class UnderlyingHolding(Base):
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String)
     allocation_percent = Column(Float, nullable=True)  # NEW
-    holding_id = Column(Integer, ForeignKey("holdings.id"))
+    holding_id = Column(Integer, ForeignKey("holdings.id", ondelete="CASCADE"))
 
     holding = relationship("Holding", back_populates="underlyings")

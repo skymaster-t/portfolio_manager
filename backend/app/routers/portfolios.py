@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Portfolio, Holding
+from app.models import Portfolio, Holding, UnderlyingHolding  # ← Added UnderlyingHolding import
 from app.schemas import PortfolioCreate, PortfolioResponse
 from typing import List
 
@@ -14,6 +14,11 @@ def get_portfolios(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
 def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_db)):
+    # Check for duplicates
+    existing = db.query(Portfolio).filter(Portfolio.name.ilike(portfolio_data.name)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Portfolio name must be unique")
+
     # If is_default, unset others
     if portfolio_data.is_default:
         db.query(Portfolio).update({Portfolio.is_default: False})
@@ -62,9 +67,17 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    # Delete all associated holdings (and their underlyings via cascade in holdings router)
-    db.query(Holding).filter(Holding.portfolio_id == portfolio_id).delete()
+    # === FIX: Delete underlying_holdings first (bulk) to avoid FK violation ===
+    db.query(UnderlyingHolding).filter(
+        UnderlyingHolding.holding_id.in_(
+            db.query(Holding.id).filter(Holding.portfolio_id == portfolio_id).subquery()
+        )
+    ).delete(synchronize_session=False)
 
+    # Now safe to delete holdings
+    db.query(Holding).filter(Holding.portfolio_id == portfolio_id).delete(synchronize_session=False)
+
+    # Finally delete the portfolio
     db.delete(portfolio)
     db.commit()
     return None
