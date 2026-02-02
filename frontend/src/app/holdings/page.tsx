@@ -73,15 +73,16 @@ const OTHER_COLOR = '#94a3b8';
 export default function Holdings() {
   const queryClient = useQueryClient();
   const [openHoldingForm, setOpenHoldingForm] = useState(false);
-  const [openPortfolioForm, setOpenPortfolioForm] = useState(false);
+  const [openPortfolioDialog, setOpenPortfolioDialog] = useState(false);
   const [openDelete, setOpenDelete] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
   const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
   const [exchangeRate, setExchangeRate] = useState<number>(1.37);
 
-  // Portfolio form
-  const [newPortfolioName, setNewPortfolioName] = useState('');
-  const [newPortfolioDefault, setNewPortfolioDefault] = useState(false);
+  // Portfolio dialog state (add/edit/delete)
+  const [selectedPortfolio, setSelectedPortfolio] = useState<Portfolio | null>(null);
+  const [portfolioName, setPortfolioName] = useState('');
+  const [portfolioDefault, setPortfolioDefault] = useState(false);
 
   // Holding form
   const [symbol, setSymbol] = useState('');
@@ -186,13 +187,39 @@ export default function Holdings() {
     mutationFn: (data: any) => axios.post('http://localhost:8000/portfolios', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['portfolios'] });
-      setOpenPortfolioForm(false);
-      setNewPortfolioName('');
-      setNewPortfolioDefault(false);
+      setOpenPortfolioDialog(false);
+      resetPortfolioForm();
       toast.success("Portfolio added successfully!");
     },
     onError: () => {
       toast.error("Failed to add portfolio");
+    },
+  });
+
+  const updatePortfolioMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) => axios.put(`http://localhost:8000/portfolios/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['portfolios'] });
+      setOpenPortfolioDialog(false);
+      resetPortfolioForm();
+      toast.success("Portfolio updated successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to update portfolio");
+    },
+  });
+
+  const deletePortfolioMutation = useMutation({
+    mutationFn: (id: number) => axios.delete(`http://localhost:8000/portfolios/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['portfolios'] });
+      queryClient.invalidateQueries({ queryKey: ['holdings'] });
+      setOpenPortfolioDialog(false);
+      resetPortfolioForm();
+      toast.success("Portfolio deleted successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to delete portfolio");
     },
   });
 
@@ -204,6 +231,12 @@ export default function Holdings() {
     setTempUnderlyings([]);
     setUnderlyingSymbol('');
     setSelectedHolding(null);
+  };
+
+  const resetPortfolioForm = () => {
+    setSelectedPortfolio(null);
+    setPortfolioName('');
+    setPortfolioDefault(false);
   };
 
   const openHoldingFormDialog = (holding?: Holding) => {
@@ -221,6 +254,17 @@ export default function Holdings() {
       setSelectedPortfolioId(defaultPort ? defaultPort.id : portfolios[0]?.id || null);
     }
     setOpenHoldingForm(true);
+  };
+
+  const handleOpenPortfolioDialog = (portfolio?: Portfolio) => {
+    if (portfolio) {
+      setSelectedPortfolio(portfolio);
+      setPortfolioName(portfolio.name);
+      setPortfolioDefault(portfolio.is_default);
+    } else {
+      resetPortfolioForm();
+    }
+    setOpenPortfolioDialog(true);
   };
 
   const handleHoldingSubmit = () => {
@@ -245,19 +289,36 @@ export default function Holdings() {
     }
   };
 
-  const handleAddPortfolio = () => {
-    if (!newPortfolioName.trim()) {
+  const handlePortfolioSubmit = () => {
+    if (!portfolioName.trim()) {
       toast.error("Portfolio name is required");
       return;
     }
-    if (portfolios.some((p: Portfolio) => p.name.toLowerCase() === newPortfolioName.toLowerCase())) {
+
+    const nameExists = portfolios.some(
+      (p) => p.name.toLowerCase() === portfolioName.toLowerCase() && p.id !== selectedPortfolio?.id
+    );
+    if (nameExists) {
       toast.error("Portfolio name must be unique");
       return;
     }
-    addPortfolioMutation.mutate({
-      name: newPortfolioName,
-      is_default: newPortfolioDefault,
-    });
+
+    const payload = {
+      name: portfolioName,
+      is_default: portfolioDefault,
+    };
+
+    if (selectedPortfolio) {
+      updatePortfolioMutation.mutate({ id: selectedPortfolio.id, data: payload });
+    } else {
+      addPortfolioMutation.mutate(payload);
+    }
+  };
+
+  const handlePortfolioDelete = () => {
+    if (selectedPortfolio) {
+      deletePortfolioMutation.mutate(selectedPortfolio.id);
+    }
   };
 
   const addUnderlying = () => {
@@ -320,6 +381,8 @@ export default function Holdings() {
 
       const largeData = individualData.filter(item => item.percentage >= 8);
       const smallData = individualData.filter(item => item.percentage < 8);
+
+      largeData.sort((a, b) => b.value - a.value);
 
       let chartData = [...largeData];
 
@@ -482,136 +545,95 @@ export default function Holdings() {
         ))}
       </div>
 
-      {/* Add Portfolio and Add Holding Buttons */}
-      <div className="flex gap-4">
-        <Dialog open={openPortfolioForm} onOpenChange={setOpenPortfolioForm}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" /> Add Portfolio
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Portfolio</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4">
-              <div>
-                <Label>Name</Label>
-                <Input value={newPortfolioName} onChange={e => setNewPortfolioName(e.target.value)} placeholder="My Growth Portfolio" />
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox id="default" checked={newPortfolioDefault} onCheckedChange={(checked) => setNewPortfolioDefault(checked as boolean)} />
-                <Label htmlFor="default" className="text-sm font-medium cursor-pointer">
-                  Set as default portfolio
-                </Label>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <Button variant="outline" onClick={() => setOpenPortfolioForm(false)}>Cancel</Button>
-              <Button onClick={handleAddPortfolio}>Create Portfolio</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+      {/* Floating Add Portfolio Button */}
+      <Button
+        className="fixed bottom-6 right-6 rounded-full w-14 h-14 shadow-lg z-50"
+        onClick={() => handleOpenPortfolioDialog()}
+      >
+        <Plus className="h-6 w-6" />
+      </Button>
 
-        <Dialog open={openHoldingForm} onOpenChange={setOpenHoldingForm}>
-          <DialogTrigger asChild>
-            <Button onClick={() => openHoldingFormDialog()}>
-              <Plus className="mr-2 h-4 w-4" /> Add Holding
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{selectedHolding ? 'Edit' : 'Add'} Holding</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Symbol</Label>
-                  <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="AAPL or XIC.TO" />
-                </div>
-                <div>
-                  <Label>Portfolio</Label>
-                  <Select value={selectedPortfolioId?.toString()} onValueChange={(v) => setSelectedPortfolioId(parseInt(v))}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select portfolio" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {portfolios.map((p: Portfolio) => (
-                        <SelectItem key={p.id} value={p.id.toString()}>
-                          {p.name} {p.is_default ? '(Default)' : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Type</Label>
-                  <Select value={type_} onValueChange={(v: 'stock' | 'etf') => setType(v)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="etf">ETF (default)</SelectItem>
-                      <SelectItem value="stock">Stock</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Quantity</Label>
-                  <Input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="100" />
-                </div>
-              </div>
-              <div>
-                <Label>Purchase Price</Label>
-                <Input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="150.00" />
-              </div>
-
-              {type_ === 'etf' && (
-                <div className="border-t pt-4">
-                  <Label>Underlying Stocks</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Input value={underlyingSymbol} onChange={e => setUnderlyingSymbol(e.target.value)} placeholder="MSFT" />
-                    <Button onClick={addUnderlying} variant="outline">Add</Button>
-                  </div>
-                  <div className="mt-4 space-y-2">
-                    {tempUnderlyings.map(u => (
-                      <div key={u.id} className="flex items-center justify-between bg-muted p-2 rounded">
-                        <span className="font-medium">{u.symbol}</span>
-                        <Button size="sm" variant="ghost" onClick={() => removeUnderlying(u.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                    {tempUnderlyings.length === 0 && <p className="text-sm text-muted-foreground">No underlying stocks added yet.</p>}
-                  </div>
-                </div>
-              )}
+      {/* Unified Portfolio Dialog (Add/Edit with Delete option) */}
+      <Dialog open={openPortfolioDialog} onOpenChange={(open) => {
+        if (!open) {
+          setOpenPortfolioDialog(false);
+          resetPortfolioForm();
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{selectedPortfolio ? 'Edit Portfolio' : 'Add New Portfolio'}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label htmlFor="portfolio-name">Name</Label>
+              <Input
+                id="portfolio-name"
+                value={portfolioName}
+                onChange={(e) => setPortfolioName(e.target.value)}
+                placeholder="My Growth Portfolio"
+              />
             </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setOpenHoldingForm(false)}>Cancel</Button>
-              <Button onClick={handleHoldingSubmit} disabled={addHoldingMutation.isPending || updateHoldingMutation.isPending}>
-                {addHoldingMutation.isPending || updateHoldingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {selectedHolding ? 'Update' : 'Add'} Holding
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="portfolio-default"
+                checked={portfolioDefault}
+                onCheckedChange={(checked) => setPortfolioDefault(checked as boolean)}
+              />
+              <Label htmlFor="portfolio-default" className="text-sm font-medium cursor-pointer">
+                Set as default portfolio
+              </Label>
+            </div>
+          </div>
+          <div className="flex justify-between">
+            {selectedPortfolio && (
+              <Button
+                variant="destructive"
+                onClick={handlePortfolioDelete}
+                disabled={deletePortfolioMutation.isPending}
+              >
+                {deletePortfolioMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  'Delete Portfolio'
+                )}
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setOpenPortfolioDialog(false);
+                  resetPortfolioForm();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handlePortfolioSubmit}>
+                {selectedPortfolio ? 'Update' : 'Create'} Portfolio
               </Button>
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {/* Current Portfolios List */}
+      {/* Current Portfolios List - Clickable highlighted buttons */}
       {portfolios.length > 0 && (
         <div className="mt-6">
           <h2 className="text-2xl font-semibold mb-4">Current Portfolios</h2>
-          <div className="flex flex-wrap gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {portfolios.map((p: Portfolio) => (
-              <Card key={p.id} className="p-4 min-w-48">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium">{p.name}</p>
-                  {p.is_default && <Badge variant="secondary">Default</Badge>}
+              <Button
+                key={p.id}
+                variant="outline"
+                className="h-full p-6 text-left hover:shadow-lg hover:border-primary transition-all"
+                onClick={() => handleOpenPortfolioDialog(p)}
+              >
+                <div className="flex flex-col">
+                  <p className="text-lg font-semibold">{p.name}</p>
+                  {p.is_default && <Badge variant="secondary" className="mt-2 w-fit">Default</Badge>}
                 </div>
-              </Card>
+              </Button>
             ))}
           </div>
         </div>
