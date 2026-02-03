@@ -7,6 +7,10 @@ class HoldingType(str, Enum):
     stock = "stock"
     etf = "etf"
 
+class Currency(str, Enum):
+    CAD = "CAD"
+    USD = "USD"
+
 class UnderlyingBase(BaseModel):
     symbol: str
 
@@ -34,10 +38,12 @@ class HoldingBase(BaseModel):
     quantity: float
     purchase_price: float
     portfolio_id: int
+    currency: Optional[Currency] = None
 
 class HoldingCreate(HoldingBase):
     underlyings: Optional[List[UnderlyingCreate]] = []
     portfolio_id: int
+    currency: Optional[Currency] = None
 
 class HoldingUpdate(BaseModel):
     symbol: Optional[str] = None
@@ -46,6 +52,7 @@ class HoldingUpdate(BaseModel):
     purchase_price: Optional[float] = None
     portfolio_id: Optional[int] = None
     underlyings: Optional[List[UnderlyingCreate]] = None
+    currency: Optional[Currency] = None
 
 class HoldingResponse(HoldingBase):
     id: int
@@ -61,6 +68,7 @@ class HoldingResponse(HoldingBase):
     daily_change_percent: Optional[float] = None
 
     last_price_update: Optional[datetime] = None
+    currency: Currency
     
     underlyings: List[Underlying] = []
     underlying_details: List[UnderlyingDetail] = []

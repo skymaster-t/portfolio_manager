@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Portfolio, Holding
+from app.models import Portfolio, Holding, UnderlyingHolding
 from app.schemas import PortfolioCreate, PortfolioResponse
 from typing import List
 from pydantic import BaseModel
@@ -72,17 +72,16 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    # === FIX: Delete underlying_holdings first (bulk) to avoid FK violation ===
+    # Delete all holdings in this portfolio (and their underlyings via cascade or explicit)
+    db.query(Holding).filter(Holding.portfolio_id == portfolio_id).delete()
+
+    # Explicitly delete underlyings if not cascaded
     db.query(UnderlyingHolding).filter(
         UnderlyingHolding.holding_id.in_(
-            db.query(Holding.id).filter(Holding.portfolio_id == portfolio_id).subquery()
+            db.query(Holding.id).filter(Holding.portfolio_id == portfolio_id)
         )
     ).delete(synchronize_session=False)
 
-    # Now safe to delete holdings
-    db.query(Holding).filter(Holding.portfolio_id == portfolio_id).delete(synchronize_session=False)
-
-    # Finally delete the portfolio
     db.delete(portfolio)
     db.commit()
     return None

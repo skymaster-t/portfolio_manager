@@ -9,12 +9,16 @@ class HoldingType(enum.Enum):
     stock = "stock"
     etf = "etf"
 
+# NEW: Currency enum
+class Currency(enum.Enum):
+    CAD = "CAD"
+    USD = "USD"
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    # Future: username, full_name, etc.
 
     portfolios = relationship("Portfolio", back_populates="user")
 
@@ -43,11 +47,14 @@ class Holding(Base):
     market_value = Column(Float, nullable=True)
     all_time_gain_loss = Column(Float, nullable=True)
     
-    # Daily from FMP
+    # Daily from FMP/Yahoo
     daily_change = Column(Float, nullable=True)
     daily_change_percent = Column(Float, nullable=True)
     
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
+
+    # NEW: Currency field – required, defaults to USD
+    currency = Column(Enum(Currency), nullable=False, server_default=Currency.USD.value)
 
     portfolio = relationship("Portfolio", back_populates="holdings")
     underlyings = relationship("UnderlyingHolding", back_populates="holding")
@@ -57,7 +64,7 @@ class UnderlyingHolding(Base):
     __tablename__ = "underlying_holdings"
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String)
-    allocation_percent = Column(Float, nullable=True)  # NEW
+    allocation_percent = Column(Float, nullable=True)
     holding_id = Column(Integer, ForeignKey("holdings.id", ondelete="CASCADE"))
 
     holding = relationship("Holding", back_populates="underlyings")
