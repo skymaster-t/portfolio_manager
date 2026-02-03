@@ -1,8 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 from app.database import get_db
-from app.models import Portfolio, Holding, UnderlyingHolding
-from app.schemas import PortfolioCreate, PortfolioResponse
+from app.models import Portfolio, Holding, UnderlyingHolding, PortfolioHistory, GlobalHistory
+from app.schemas import (
+    PortfolioCreate,
+    PortfolioResponse,
+    PortfolioHistoryResponse,
+    GlobalHistoryResponse,
+)
 from typing import List
 from pydantic import BaseModel
 
@@ -19,12 +25,10 @@ def get_portfolios(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
 def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_db)):
-    # Check for duplicates
     existing = db.query(Portfolio).filter(Portfolio.name.ilike(portfolio_data.name)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Portfolio name must be unique")
 
-    # If is_default, unset others
     if portfolio_data.is_default:
         db.query(Portfolio).update({Portfolio.is_default: False})
         db.commit()
@@ -32,7 +36,7 @@ def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_
     new_portfolio = Portfolio(
         name=portfolio_data.name,
         is_default=portfolio_data.is_default,
-        user_id=1  # TODO:Hardcoded default user for now
+        user_id=1
     )
     db.add(new_portfolio)
     db.commit()
@@ -45,7 +49,6 @@ def update_portfolio(portfolio_id: int, portfolio_data: PortfolioCreate, db: Ses
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    # Check name uniqueness (excluding current portfolio)
     if portfolio_data.name != portfolio.name:
         existing = db.query(Portfolio).filter(
             Portfolio.name.ilike(portfolio_data.name),
@@ -54,7 +57,6 @@ def update_portfolio(portfolio_id: int, portfolio_data: PortfolioCreate, db: Ses
         if existing:
             raise HTTPException(status_code=400, detail="Portfolio name must be unique")
 
-    # If setting as default, unset others
     if portfolio_data.is_default and not portfolio.is_default:
         db.query(Portfolio).update({Portfolio.is_default: False})
         db.commit()
@@ -72,10 +74,8 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    # Delete all holdings in this portfolio (and their underlyings via cascade or explicit)
     db.query(Holding).filter(Holding.portfolio_id == portfolio_id).delete()
 
-    # Explicitly delete underlyings if not cascaded
     db.query(UnderlyingHolding).filter(
         UnderlyingHolding.holding_id.in_(
             db.query(Holding.id).filter(Holding.portfolio_id == portfolio_id)
@@ -96,3 +96,31 @@ def reorder_portfolios(request: ReorderRequest, db: Session = Depends(get_db)):
         portfolio.display_order = index
     db.commit()
     return {"detail": "Order updated successfully"}
+
+# Latest per-portfolio history snapshots
+@router.get("/history/latest/all", response_model=List[PortfolioHistoryResponse])
+def get_latest_portfolio_histories(db: Session = Depends(get_db)):
+    subq = db.query(
+        PortfolioHistory.portfolio_id,
+        func.max(PortfolioHistory.timestamp).label('max_timestamp')
+    ).group_by(PortfolioHistory.portfolio_id).subquery()
+
+    latest = db.query(PortfolioHistory).join(
+        subq,
+        and_(
+            PortfolioHistory.portfolio_id == subq.c.portfolio_id,
+            PortfolioHistory.timestamp == subq.c.max_timestamp
+        )
+    ).all()
+
+    return latest
+
+# Latest global history snapshot
+@router.get("/global/history/latest", response_model=GlobalHistoryResponse)
+def get_latest_global_history(db: Session = Depends(get_db)):
+    latest = db.query(GlobalHistory)\
+               .order_by(GlobalHistory.timestamp.desc())\
+               .first()
+    if not latest:
+        raise HTTPException(status_code=404, detail="No global history snapshot yet")
+    return latest

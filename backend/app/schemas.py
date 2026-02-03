@@ -89,3 +89,27 @@ class PortfolioResponse(PortfolioBase):
 
     class Config:
         from_attributes = True
+
+class PortfolioHistoryResponse(BaseModel):
+    portfolio_id: int
+    timestamp: datetime
+    total_value: float
+    daily_change: float
+    daily_percent: float
+    all_time_gain: float
+    all_time_percent: float
+
+    class Config:
+        from_attributes = True
+
+class GlobalHistoryResponse(BaseModel):
+    timestamp: datetime
+    total_value: float
+    daily_change: float
+    daily_percent: float
+    all_time_gain: float
+    all_time_percent: float
+
+    class Config:
+        from_attributes = True
+        

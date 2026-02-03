@@ -14,24 +14,36 @@ celery_app = Celery(
     "worker",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.tasks.update_prices"]  # Explicitly include the tasks module
 )
 
 celery_app.conf.update(
     task_serializer="json",
-    accept_content=["json"],
     result_serializer="json",
+    accept_content=["json"],
     timezone="America/Toronto",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
 )
 
-# Auto-discover tasks in app.tasks package (scalable for future tasks)
+# Auto-discover tasks in app.tasks package
 celery_app.autodiscover_tasks(['app.tasks'])
 
-# Beat schedule
+# Explicit imports to ensure task registration (prevents "unregistered task" errors)
+try:
+    from app.tasks.update_prices import update_all_prices  # noqa: F401
+    from app.tasks.portfolio_history_task import save_portfolio_history_snapshot  # noqa: F401
+except ImportError as e:
+    import logging
+    logging.warning(f"Could not import tasks: {e}")
+
+# Combined beat schedule (single dict – prevents overwriting)
 celery_app.conf.beat_schedule = {
-    "update-stock-prices-every-15-min": {
-        "task": "app.tasks.update_all_prices",  # Matches @celery_app.task decorator name
-        "schedule": 900.0,  # 15 minutes
+    "update-stock-prices-every-5-min": {
+        "task": "app.tasks.update_prices.update_all_prices",
+        "schedule": 300.0,  # 5 minutes
+    },
+    "portfolio-history-snapshot": {
+        "task": "app.tasks.portfolio_history_task.save_portfolio_history_snapshot",
+        "schedule": 300.0,  # every 5 minutes
     },
 }

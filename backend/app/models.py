@@ -1,4 +1,4 @@
-# backend/app/models.py
+# backend/app/models.py (updated – added history models for per-portfolio and global snapshots)
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, Enum, Table, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -9,7 +9,6 @@ class HoldingType(enum.Enum):
     stock = "stock"
     etf = "etf"
 
-# NEW: Currency enum
 class Currency(enum.Enum):
     CAD = "CAD"
     USD = "USD"
@@ -32,6 +31,7 @@ class Portfolio(Base):
 
     user = relationship("User", back_populates="portfolios")
     holdings = relationship("Holding", back_populates="portfolio")
+    history = relationship("PortfolioHistory", back_populates="portfolio")
 
 class Holding(Base):
     __tablename__ = "holdings"
@@ -53,12 +53,11 @@ class Holding(Base):
     
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
 
-    # NEW: Currency field – required, defaults to USD
     currency = Column(Enum(Currency), nullable=False, server_default=Currency.USD.value)
 
     portfolio = relationship("Portfolio", back_populates="holdings")
     underlyings = relationship("UnderlyingHolding", back_populates="holding")
-    last_price_update: datetime = Column(DateTime, nullable=True)
+    last_price_update = Column(DateTime, nullable=True)
 
 class UnderlyingHolding(Base):
     __tablename__ = "underlying_holdings"
@@ -68,3 +67,30 @@ class UnderlyingHolding(Base):
     holding_id = Column(Integer, ForeignKey("holdings.id", ondelete="CASCADE"))
 
     holding = relationship("Holding", back_populates="underlyings")
+
+# NEW: Per-portfolio history snapshots
+class PortfolioHistory(Base):
+    __tablename__ = "portfolio_history"
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    total_value = Column(Float)  # current market value
+    daily_change = Column(Float)  # dollar change today
+    daily_percent = Column(Float)  # % change today
+    all_time_gain = Column(Float)  # total gain since inception
+    all_time_percent = Column(Float)  # % return since inception
+
+    portfolio = relationship("Portfolio", back_populates="history")
+
+# NEW: Global (all portfolios combined) history snapshots
+class GlobalHistory(Base):
+    __tablename__ = "global_history"
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    total_value = Column(Float)
+    daily_change = Column(Float)
+    daily_percent = Column(Float)
+    all_time_gain = Column(Float)
+    all_time_percent = Column(Float)

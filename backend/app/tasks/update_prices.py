@@ -1,9 +1,8 @@
-# backend/app/tasks/update_prices.py
 from sqlalchemy.orm import Session, joinedload
 from app.database import SessionLocal
 from app.models import Holding
 from app.utils.yahoo import batch_fetch_prices
-from app.celery import celery_app
+from app.celery_config import celery_app
 import logging
 import pytz
 from datetime import datetime
