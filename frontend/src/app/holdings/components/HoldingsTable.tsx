@@ -1,7 +1,7 @@
-// src/app/holdings/components/HoldingsTable.tsx (updated: edit/delete buttons have stronger, colored hover highlights + larger icons)
+// src/app/holdings/components/HoldingsTable.tsx (updated: fully sortable table by clicking headers)
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import {
   Table,
   TableBody,
@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Edit, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Edit, Trash2, ChevronRight, ChevronDown, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface Holding {
   id: number;
@@ -49,6 +49,19 @@ interface Props {
   isLoading: boolean;
 }
 
+type SortKey =
+  | 'symbol'
+  | 'ratio'
+  | 'type'
+  | 'quantity'
+  | 'purchase_price'
+  | 'current_price'
+  | 'market_value'
+  | 'daily_change'
+  | 'all_time_gain_loss';
+
+type SortDirection = 'asc' | 'desc';
+
 export function HoldingsTable({
   holdings,
   portfolioName,
@@ -60,6 +73,9 @@ export function HoldingsTable({
   exchangeRate,
   isLoading,
 }: Props) {
+  const [sortKey, setSortKey] = useState<SortKey>('symbol');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
   const formatter = new Intl.NumberFormat(displayCurrency === 'CAD' ? 'en-CA' : 'en-US', {
     style: 'currency',
     currency: displayCurrency,
@@ -101,10 +117,86 @@ export function HoldingsTable({
   const hasUnderlyings = (holding: Holding) =>
     holding.type === 'etf' && (holding.underlying_details?.length || 0) > 0;
 
-  const portfolioTotalValue = holdings.reduce(
-    (sum, h) => sum + (h.market_value || 0),
-    0
+  // Compute portfolio total for ratio sorting
+  const portfolioTotalValue = useMemo(
+    () => holdings.reduce((sum, h) => sum + (h.market_value || 0), 0),
+    [holdings]
   );
+
+  // Sorted holdings
+  const sortedHoldings = useMemo(() => {
+    const sorted = [...holdings];
+
+    sorted.sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+
+      switch (sortKey) {
+        case 'symbol':
+          aVal = a.symbol.toLowerCase();
+          bVal = b.symbol.toLowerCase();
+          break;
+        case 'ratio':
+          const aRatio = portfolioTotalValue > 0 && a.market_value ? (a.market_value / portfolioTotalValue) * 100 : 0;
+          const bRatio = portfolioTotalValue > 0 && b.market_value ? (b.market_value / portfolioTotalValue) * 100 : 0;
+          aVal = aRatio;
+          bVal = bRatio;
+          break;
+        case 'type':
+          aVal = a.type;
+          bVal = b.type;
+          break;
+        case 'quantity':
+          aVal = a.quantity;
+          bVal = b.quantity;
+          break;
+        case 'purchase_price':
+          aVal = a.purchase_price;
+          bVal = b.purchase_price;
+          break;
+        case 'current_price':
+          aVal = a.current_price ?? -Infinity; // nulls last
+          bVal = b.current_price ?? -Infinity;
+          break;
+        case 'market_value':
+          aVal = a.market_value ?? -Infinity;
+          bVal = b.market_value ?? -Infinity;
+          break;
+        case 'daily_change':
+          aVal = (a.daily_change ?? 0) * a.quantity;
+          bVal = (b.daily_change ?? 0) * b.quantity;
+          break;
+        case 'all_time_gain_loss':
+          aVal = a.all_time_gain_loss ?? -Infinity;
+          bVal = b.all_time_gain_loss ?? -Infinity;
+          break;
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [holdings, sortKey, sortDirection, portfolioTotalValue]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortIcon = ({ column }: { column: SortKey }) => {
+    if (sortKey !== column) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />;
+    return sortDirection === 'asc' ? (
+      <ArrowUp className="ml-2 h-4 w-4" />
+    ) : (
+      <ArrowDown className="ml-2 h-4 w-4" />
+    );
+  };
 
   if (isLoading) {
     return (
@@ -183,21 +275,93 @@ export function HoldingsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead></TableHead>
-              <TableHead>Symbol</TableHead>
-              <TableHead className="text-right">Ratio</TableHead>
-              <TableHead className="text-center">Type</TableHead>
-              <TableHead>Quantity</TableHead>
-              <TableHead>Purchase Price</TableHead>
-              <TableHead>Current Price</TableHead>
-              <TableHead>Market Value</TableHead>
-              <TableHead>Daily ∆</TableHead>
-              <TableHead>All-Time ∆</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="w-12"></TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('symbol')}
+              >
+                <div className="flex items-center">
+                  Symbol
+                  <SortIcon column="symbol" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="text-right cursor-pointer select-none"
+                onClick={() => handleSort('ratio')}
+              >
+                <div className="flex items-center justify-end">
+                  Ratio
+                  <SortIcon column="ratio" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="text-center cursor-pointer select-none"
+                onClick={() => handleSort('type')}
+              >
+                <div className="flex items-center justify-center">
+                  Type
+                  <SortIcon column="type" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('quantity')}
+              >
+                <div className="flex items-center">
+                  Quantity
+                  <SortIcon column="quantity" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('purchase_price')}
+              >
+                <div className="flex items-center">
+                  Purchase Price
+                  <SortIcon column="purchase_price" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('current_price')}
+              >
+                <div className="flex items-center">
+                  Current Price
+                  <SortIcon column="current_price" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('market_value')}
+              >
+                <div className="flex items-center">
+                  Market Value
+                  <SortIcon column="market_value" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('daily_change')}
+              >
+                <div className="flex items-center">
+                  Daily ∆
+                  <SortIcon column="daily_change" />
+                </div>
+              </TableHead>
+              <TableHead
+                className="cursor-pointer select-none"
+                onClick={() => handleSort('all_time_gain_loss')}
+              >
+                <div className="flex items-center">
+                  All-Time ∆
+                  <SortIcon column="all_time_gain_loss" />
+                </div>
+              </TableHead>
+              <TableHead className="text-right w-24">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {holdings.map((holding) => {
+            {sortedHoldings.map((holding) => {
               const isCad = isCadTicker(holding.symbol);
               const isExpanded = expandedHoldings.has(holding.id);
 
@@ -209,7 +373,7 @@ export function HoldingsTable({
               return (
                 <Fragment key={holding.id}>
                   <TableRow
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={hasUnderlyings(holding) ? 'cursor-pointer hover:bg-muted/50' : ''}
                     onClick={() => hasUnderlyings(holding) && onToggleExpand(holding.id)}
                   >
                     <TableCell>
@@ -264,7 +428,6 @@ export function HoldingsTable({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        {/* Edit button – stronger indigo hover highlight + larger icon */}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -276,7 +439,6 @@ export function HoldingsTable({
                         >
                           <Edit className="h-5 w-5" />
                         </Button>
-                        {/* Delete button – stronger red hover highlight + larger icon */}
                         <Button
                           size="icon"
                           variant="ghost"

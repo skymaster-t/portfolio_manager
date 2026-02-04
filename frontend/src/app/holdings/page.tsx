@@ -1,4 +1,4 @@
-// src/app/holdings/page.tsx (fixed: removed infinite loop cause; lastRefreshTime updated only on manual refresh + initial load)
+// src/app/holdings/page.tsx (updated: forced background refetch every 5 min even when tab inactive + chart updates)
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -59,7 +59,8 @@ export default function Holdings() {
   } = useQuery({
     queryKey: ['portfoliosSummaries'],
     queryFn: fetchPortfoliosSummaries,
-    refetchInterval: 300000, // Silent auto-refresh every 5 minutes
+    refetchInterval: 300000, // Every 5 minutes
+    refetchIntervalInBackground: true, // Force even when tab inactive
   });
 
   const {
@@ -72,6 +73,7 @@ export default function Holdings() {
       return data;
     },
     refetchInterval: 300000,
+    refetchIntervalInBackground: true,
   });
 
   const { data: fxRate = 1.37 } = useQuery({
@@ -82,6 +84,7 @@ export default function Holdings() {
     },
     staleTime: 5 * 60 * 1000,
     refetchInterval: 300000,
+    refetchIntervalInBackground: true,
   });
 
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
@@ -103,7 +106,6 @@ export default function Holdings() {
   const [openHoldingDelete, setOpenHoldingDelete] = useState(false);
   const [openPortfolioDelete, setOpenPortfolioDelete] = useState(false);
 
-  // Expandable underlying holdings state
   const [expandedHoldings, setExpandedHoldings] = useState<Set<number>>(new Set());
 
   const handleToggleExpand = (id: number) => {
@@ -118,7 +120,6 @@ export default function Holdings() {
     });
   };
 
-  // Manual refresh (with toast)
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -128,7 +129,6 @@ export default function Holdings() {
         queryClient.refetchQueries({ queryKey: ['allHoldings'] }),
         queryClient.refetchQueries({ queryKey: ['fxRate'] }),
       ]);
-      setLastRefreshTime(new Date());
       toast.success('Data refreshed');
     } catch {
       toast.error('Failed to refresh data');
@@ -137,7 +137,6 @@ export default function Holdings() {
     }
   };
 
-  // Last refreshed time – updated on manual refresh + once on initial load
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
@@ -158,12 +157,12 @@ export default function Holdings() {
     return `${days} day${days !== 1 ? 's' : ''} ago`;
   };
 
-  // Set initial refresh time once when data loads (prevents infinite loop)
+  // Update last refresh time on any successful refetch (auto or manual)
   useEffect(() => {
-    if (!lastRefreshTime && portfoliosSummaries.length > 0) {
+    if (portfoliosSummaries.length > 0) {
       setLastRefreshTime(new Date());
     }
-  }, [portfoliosSummaries.length, lastRefreshTime]);
+  }, [portfoliosSummaries]);
 
   useEffect(() => {
     if (portfoliosSummaries.length > 0 && selectedPortfolioId === null) {
@@ -199,7 +198,6 @@ export default function Holdings() {
     deleteHolding,
   } = usePortfolioMutations(queryClient);
 
-  // Shared success handler for holding mutations
   const onHoldingSuccess = () => {
     setOpenHoldingForm(false);
     setSelectedHolding(null);

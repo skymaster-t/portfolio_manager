@@ -41,6 +41,7 @@ export function PortfolioValueChart() {
     queryKey: ['globalHistory'],
     queryFn: fetchGlobalHistory,
     refetchInterval: 300000,
+    refetchIntervalInBackground: true,
     staleTime: 300000,
   });
 

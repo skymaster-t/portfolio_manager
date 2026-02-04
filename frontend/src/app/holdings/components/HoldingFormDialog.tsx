@@ -1,4 +1,4 @@
-// src/app/holdings/components/HoldingFormDialog.tsx (updated: "Add Underlying" button now matches primary indigo style of "Add Holding")
+// src/app/holdings/components/HoldingFormDialog.tsx (updated: underlying list now scrollable after ~8 entries)
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -243,7 +243,6 @@ export function HoldingFormDialog({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-medium">Underlyings</Label>
-                {/* "Add Underlying" now matches primary indigo style (same as Save / Add Holding) */}
                 <Button
                   size="sm"
                   onClick={addUnderlying}
@@ -257,7 +256,8 @@ export function HoldingFormDialog({
               {underlyings.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-4">No underlyings added yet.</p>
               ) : (
-                <div className="space-y-4">
+                /* Scrollable container – shows ~8 entries before scrolling */
+                <div className="max-h-96 overflow-y-auto rounded-lg border border-border bg-muted/30 p-4 space-y-4">
                   {underlyings.map((u) => (
                     <div key={u.tempId} className="flex gap-4 items-end">
                       <div className="flex-1 space-y-2">
