@@ -9,12 +9,23 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Plus, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+
+interface Portfolio {
+  id: number;
+  name: string;
+}
+
+interface Underlying {
+  id?: number;
+  symbol: string;
+  allocation_percent?: number | null;
+}
 
 interface Holding {
   id?: number;
@@ -23,13 +34,7 @@ interface Holding {
   quantity: number;
   purchase_price: number;
   portfolio_id: number;
-  underlyings?: { id: number; symbol: string; allocation_percent?: number }[];
-}
-
-interface Portfolio {
-  id: number;
-  name: string;
-  is_default: boolean;
+  underlyings?: Underlying[];
 }
 
 interface Props {
@@ -38,16 +43,17 @@ interface Props {
   selectedHolding: Holding | null;
   portfolios: Portfolio[];
   defaultPortfolioId: number | null;
-  onSubmit: (data: any) => void;
+  onSubmit: (payload: any) => void;
   isPending: boolean;
 }
 
 interface TempUnderlying {
   tempId: number;
-  id?: number;
   symbol: string;
-  allocation_percent: string;
+  allocation: string;
 }
+
+let nextTempId = Date.now();
 
 export function HoldingFormDialog({
   open,
@@ -59,119 +65,138 @@ export function HoldingFormDialog({
   isPending,
 }: Props) {
   const [symbol, setSymbol] = useState('');
-  const [type, setType] = useState<'etf' | 'stock'>('etf');
+  const [type, setType] = useState<'stock' | 'etf'>('etf');
   const [quantity, setQuantity] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
-  const [portfolioId, setPortfolioId] = useState<number | null>(null);
-  const [tempUnderlyings, setTempUnderlyings] = useState<TempUnderlying[]>([]);
+  const [portfolioId, setPortfolioId] = useState<string>('');
+  const [underlyings, setUnderlyings] = useState<TempUnderlying[]>([]);
+  const [detectedCurrency, setDetectedCurrency] = useState<'CAD' | 'USD'>('USD');
 
-  // Full reset on open + mode switch
   useEffect(() => {
-    if (!open) return;
-
     if (selectedHolding) {
-      // Edit mode
       setSymbol(selectedHolding.symbol);
       setType(selectedHolding.type);
       setQuantity(selectedHolding.quantity.toString());
       setPurchasePrice(selectedHolding.purchase_price.toString());
-      setPortfolioId(selectedHolding.portfolio_id);
-      setTempUnderlyings(
-        (selectedHolding.underlyings || []).map((u, i) => ({
-          tempId: Date.now() + i,
-          id: u.id,
-          symbol: u.symbol,
-          allocation_percent: u.allocation_percent?.toString() || '',
-        }))
-      );
+      setPortfolioId(selectedHolding.portfolio_id.toString());
+
+      if (selectedHolding.type === 'etf' && selectedHolding.underlyings?.length) {
+        setUnderlyings(
+          selectedHolding.underlyings.map((u, index) => ({
+            tempId: nextTempId + index,
+            symbol: u.symbol,
+            allocation: u.allocation_percent !== null && u.allocation_percent !== undefined
+              ? u.allocation_percent.toString()
+              : '',
+          }))
+        );
+        nextTempId += selectedHolding.underlyings.length;
+      } else {
+        setUnderlyings([]);
+      }
     } else {
-      // Add mode – clear all fields, pre-select default portfolio
       setSymbol('');
       setType('etf');
       setQuantity('');
       setPurchasePrice('');
-      setPortfolioId(defaultPortfolioId);
-      setTempUnderlyings([]);
+      setPortfolioId(defaultPortfolioId?.toString() || '');
+      setUnderlyings([]);
     }
-  }, [open, selectedHolding, defaultPortfolioId]);
+  }, [selectedHolding, open, defaultPortfolioId]);
 
-  const addTempUnderlying = () => {
-    setTempUnderlyings(prev => [...prev, { tempId: Date.now(), symbol: '', allocation_percent: '' }]);
+  const addUnderlying = () => {
+    setUnderlyings([...underlyings, { tempId: nextTempId++, symbol: '', allocation: '' }]);
   };
 
-  const updateTempUnderlying = (tempId: number, field: 'symbol' | 'allocation_percent', value: string) => {
-    setTempUnderlyings(prev =>
-      prev.map(u => (u.tempId === tempId ? { ...u, [field]: value } : u))
-    );
+  const removeUnderlying = (tempId: number) => {
+    setUnderlyings(underlyings.filter((u) => u.tempId !== tempId));
   };
 
-  const removeTempUnderlying = (tempId: number) => {
-    setTempUnderlyings(prev => prev.filter(u => u.tempId !== tempId));
+  const updateUnderlying = (tempId: number, field: 'symbol' | 'allocation', value: string) => {
+    setUnderlyings(underlyings.map((u) => (u.tempId === tempId ? { ...u, [field]: value } : u)));
+  };
+
+  const handleTypeChange = (newType: 'stock' | 'etf') => {
+    setType(newType);
+    if (newType === 'stock') {
+      setUnderlyings([]);
+    }
   };
 
   const handleSubmit = () => {
-    if (!portfolioId) {
-      toast.error('Please select a portfolio');
+    if (!symbol.trim()) {
+      toast.error('Symbol is required');
       return;
     }
 
-    const data = {
-      symbol: symbol.toUpperCase(),
+    const qty = parseFloat(quantity);
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('Valid quantity (>0) is required');
+      return;
+    }
+
+    const price = parseFloat(purchasePrice);
+    if (isNaN(price) || price <= 0) {
+      toast.error('Valid purchase price (>0) is required');
+      return;
+    }
+
+    if (!portfolioId) {
+      toast.error('Portfolio is required');
+      return;
+    }
+
+    const payload: any = {
+      symbol: symbol.trim().toUpperCase(),
       type,
-      quantity: parseFloat(quantity) || 0,
-      purchase_price: parseFloat(purchasePrice) || 0,
-      portfolio_id: portfolioId,
-      underlyings: type === 'etf'
-        ? tempUnderlyings.map(u => ({
-            symbol: u.symbol.toUpperCase(),
-            allocation_percent: u.allocation_percent ? parseFloat(u.allocation_percent) : null,
-          }))
-        : [],
+      quantity: qty,
+      purchase_price: price,
+      portfolio_id: parseInt(portfolioId),
     };
 
-    if (!data.symbol || !data.quantity || !data.purchase_price) {
-      toast.error('Please fill all required fields');
-      return;
-    }
+    // ALWAYS include underlyings key – ensures old are deleted when switching to stock or clearing
+    const validUnderlyings = type === 'etf'
+      ? underlyings
+          .filter((u) => u.symbol.trim())
+          .map((u) => {
+            const allocStr = u.allocation.trim();
+            const alloc = allocStr === '' ? null : parseFloat(allocStr);
+            return {
+              symbol: u.symbol.trim().toUpperCase(),
+              allocation_percent: alloc !== null && !isNaN(alloc) ? alloc : null,
+            };
+          })
+      : [];
 
-    onSubmit(selectedHolding ? { id: selectedHolding.id, data } : data);
+    payload.underlyings = validUnderlyings;
+
+    onSubmit(payload);
   };
+
+  const isEdit = !!selectedHolding;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl rounded-2xl shadow-2xl bg-card">
+      <DialogContent className="max-w-3xl max-h-screen overflow-y-auto rounded-2xl shadow-2xl bg-card">
         <DialogHeader className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
           <DialogTitle className="text-3xl font-bold">
-            {selectedHolding ? 'Edit' : 'Add'} Holding
+            {isEdit ? 'Edit Holding' : 'Add Holding'}
           </DialogTitle>
         </DialogHeader>
-
-        <div className="grid gap-6">
-          {/* Portfolio selector */}
-          <div className="space-y-2">
-            <Label>Portfolio <span className="text-destructive">*</span></Label>
-            <Select value={portfolioId?.toString()} onValueChange={(v) => setPortfolioId(parseInt(v))}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a portfolio" />
-              </SelectTrigger>
-              <SelectContent>
-                {portfolios.map(p => (
-                  <SelectItem key={p.id} value={p.id.toString()}>
-                    {p.name} {p.is_default && '(Default)'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-8">
+          <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label>Symbol <span className="text-destructive">*</span></Label>
-              <Input value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} placeholder="e.g. AAPL" />
+              <Label>Symbol</Label>
+              <Input
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                placeholder="e.g. VOO"
+                disabled={isPending}
+              />
             </div>
             <div className="space-y-2">
               <Label>Type</Label>
-              <Select value={type} onValueChange={(v: 'etf' | 'stock') => setType(v)}>
+              <Select value={type} onValueChange={handleTypeChange} disabled={isPending}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -183,61 +208,92 @@ export function HoldingFormDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label>Quantity <span className="text-destructive">*</span></Label>
-              <Input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} />
+              <Label>Quantity</Label>
+              <Input
+                type="number"
+                step="any"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="e.g. 100"
+                disabled={isPending}
+              />
             </div>
             <div className="space-y-2">
-              <Label>Average Cost / Purchase Price <span className="text-destructive">*</span></Label>
-              <Input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} />
+              <Label>Purchase Price</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={purchasePrice}
+                onChange={(e) => setPurchasePrice(e.target.value)}
+                placeholder="e.g. 450.00"
+                disabled={isPending}
+              />
             </div>
           </div>
 
+          <div className="space-y-2">
+            <Label>Portfolio</Label>
+            <Select value={portfolioId} onValueChange={setPortfolioId} disabled={isPending}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select portfolio" />
+              </SelectTrigger>
+              <SelectContent>
+                {portfolios.map((p) => (
+                  <SelectItem key={p.id} value={p.id.toString()}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {type === 'etf' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between pb-4 border-b border-border">
-                <Label className="text-lg font-semibold">Underlying Holdings (Allocation %)</Label>
-                <Button onClick={addTempUnderlying} variant="secondary">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">Underlyings</Label>
+                <Button size="sm" onClick={addUnderlying} disabled={isPending}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Underlying
                 </Button>
               </div>
-
-              {tempUnderlyings.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">No underlyings added yet</p>
+              {underlyings.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4">No underlyings added yet.</p>
               ) : (
                 <div className="space-y-4">
-                  {tempUnderlyings.map(u => (
-                    <div key={u.tempId} className="flex gap-4 items-center p-4 rounded-lg border bg-muted/30">
-                      <Input
-                        placeholder="Symbol e.g. AAPL"
-                        value={u.symbol}
-                        onChange={e => updateTempUnderlying(u.tempId, 'symbol', e.target.value.toUpperCase())}
-                        className="flex-1"
-                      />
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="Allocation %"
-                        value={u.allocation_percent}
-                        onChange={e => updateTempUnderlying(u.tempId, 'allocation_percent', e.target.value)}
-                        className="w-40"
-                      />
-                      <Button size="icon" variant="destructive" onClick={() => removeTempUnderlying(u.tempId)}>
-                        <X className="h-4 w-4" />
+                  {underlyings.map((u) => (
+                    <div key={u.tempId} className="flex gap-4 items-end">
+                      <div className="flex-1 space-y-2">
+                        <Label>Symbol</Label>
+                        <Input
+                          value={u.symbol}
+                          onChange={(e) => updateUnderlying(u.tempId, 'symbol', e.target.value)}
+                          placeholder="e.g. AAPL"
+                          disabled={isPending}
+                        />
+                      </div>
+                      <div className="w-32 space-y-2">
+                        <Label>Allocation %</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={u.allocation}
+                          onChange={(e) => updateUnderlying(u.tempId, 'allocation', e.target.value)}
+                          placeholder=""
+                          disabled={isPending}
+                        />
+                      </div>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => removeUnderlying(u.tempId)}
+                        disabled={isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   ))}
-                  <div className="flex justify-end">
-                    <p className="text-lg font-medium">
-                      Total Allocation:{' '}
-                      {tempUnderlyings
-                        .reduce((s, u) => s + parseFloat(u.allocation_percent || '0'), 0)
-                        .toFixed(2)}
-                      %
-                    </p>
-                  </div>
                 </div>
               )}
             </div>
@@ -245,12 +301,18 @@ export function HoldingFormDialog({
         </div>
 
         <DialogFooter className="mt-8 pt-6 border-t border-border">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={isPending}>
-            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save Holding
+            {isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save Holding'
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

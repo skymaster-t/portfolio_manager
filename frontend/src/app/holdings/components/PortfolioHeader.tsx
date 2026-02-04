@@ -1,20 +1,20 @@
-// src/app/holdings/components/PortfolioHeader.tsx
+// src/app/holdings/components/PortfolioHeader.tsx (reduced font sizes by ~2 Tailwind steps, modern sans-serif font)
 'use client';
 
+import { PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface Props {
   totalValue: number;
   gainLoss: number;
   dailyChange: number;
-  costBasis: number;
+  dailyPercent: number;
+  allTimePercent: number;
   marketValue: number;
-  currencyFormatter: Intl.NumberFormat;
-  percentFormatter: (v: number) => string;
   displayCurrency: 'CAD' | 'USD';
-  setDisplayCurrency: (v: 'CAD' | 'USD') => void;
+  setDisplayCurrency: (c: 'CAD' | 'USD') => void;
   exchangeRate: number;
   isLoading: boolean;
   onAddPortfolio: () => void;
@@ -26,10 +26,8 @@ export function PortfolioHeader({
   totalValue,
   gainLoss,
   dailyChange,
-  costBasis,
-  marketValue,
-  currencyFormatter,
-  percentFormatter,
+  dailyPercent,
+  allTimePercent,
   displayCurrency,
   setDisplayCurrency,
   exchangeRate,
@@ -38,88 +36,117 @@ export function PortfolioHeader({
   onAddHolding,
   hasSelectedPortfolio,
 }: Props) {
-  const displayedTotal = displayCurrency === 'CAD' ? totalValue * exchangeRate : totalValue;
-  const displayedGainLoss = displayCurrency === 'CAD' ? gainLoss * exchangeRate : gainLoss;
-  const displayedDaily = displayCurrency === 'CAD' ? dailyChange * exchangeRate : dailyChange;
+  const displayValue = (cadValue: number) => 
+    displayCurrency === 'CAD' ? cadValue : cadValue / exchangeRate;
 
-  const gainLossColor = displayedGainLoss >= 0 ? 'text-green-400' : 'text-red-400';
-  const dailyColor = displayedDaily >= 0 ? 'text-green-400' : 'text-red-400';
+  const formatter = new Intl.NumberFormat(displayCurrency === 'CAD' ? 'en-CA' : 'en-US', {
+    style: 'currency',
+    currency: displayCurrency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+
+  const percentFormatter = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 
   return (
-    <div className="relative overflow-hidden rounded-3xl shadow-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white mb-12">
-      <div className="absolute inset-0 bg-black/10" />
-      <div className="relative z-10 p-8 md:p-12">
-        {/* Top row – title left, add buttons top-right */}
-        <div className="flex justify-between items-start mb-12">
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-            Portfolio Overview
-          </h1>
+    <Card className="bg-gradient-to-br from-indigo-50 to-purple-50 border-0 shadow-lg">
+      <CardHeader className="pb-4">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-4xl font-bold text-gray-800">Portfolio Overview</CardTitle>
+          <div className="flex items-center gap-4">
+            <div className="flex rounded-lg border border-gray-300 bg-white p-1">
+              <button
+                onClick={() => setDisplayCurrency('CAD')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  displayCurrency === 'CAD'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                CAD
+              </button>
+              <button
+                onClick={() => setDisplayCurrency('USD')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  displayCurrency === 'USD'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                USD
+              </button>
+            </div>
 
-          <div className="flex gap-4">
-            <Button
-              size="lg"
-              variant="secondary"
-              className="bg-white/20 backdrop-blur hover:bg-white/30 text-white border border-white/30"
-              onClick={onAddPortfolio}
-            >
-              <Plus className="h-5 w-5 mr-2" />
-              New Portfolio
+            <Button onClick={onAddPortfolio} className="bg-indigo-600 hover:bg-indigo-700">
+              <PlusCircle className="mr-2 h-5 w-5" />
+              Add Portfolio
             </Button>
 
             <Button
-              size="lg"
-              variant="secondary"
-              className="bg-white/20 backdrop-blur hover:bg-white/30 text-white border border-white/30"
               onClick={onAddHolding}
               disabled={!hasSelectedPortfolio}
+              className="bg-white text-black hover:bg-gray-100 border border-gray-300 shadow-sm disabled:opacity-50"
             >
-              <Plus className="h-5 w-5 mr-2" />
+              <PlusCircle className="mr-2 h-5 w-5 text-indigo-600" />
               Add Holding
             </Button>
           </div>
         </div>
+      </CardHeader>
 
-        {/* Bottom section – totals left, currency bottom-right */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-end">
-          <div className="space-y-6">
-            <p className="text-xl md:text-2xl opacity-90">
-              Total Across All Portfolios
+      <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        {/* Total Market Value – reduced to text-5xl, modern sans-serif */}
+        <div className="text-center">
+          <p className="text-sm text-muted-foreground">Total Market Value</p>
+          {isLoading ? (
+            <Skeleton className="h-14 w-72 mt-3 mx-auto" />
+          ) : (
+            <p className="text-5xl font-bold font-sans">
+              {formatter.format(displayValue(totalValue))}
             </p>
-
-            <div className="text-5xl md:text-6xl font-extrabold">
-              {isLoading ? '...' : currencyFormatter.format(displayedTotal)}
-            </div>
-
-            <div className="space-y-4">
-              <div className={`text-2xl font-bold ${gainLossColor}`}>
-                {displayedGainLoss >= 0 ? '+' : ''}
-                {currencyFormatter.format(displayedGainLoss)}
-                {' '}
-                ({costBasis > 0 ? percentFormatter((gainLoss / costBasis) * 100) : '0.00%'})
-              </div>
-
-              <div className={`text-xl ${dailyColor}`}>
-                {displayedDaily >= 0 ? '↑' : '↓'} {currencyFormatter.format(displayedDaily)} today
-                {' '}
-                ({marketValue > 0 ? percentFormatter((dailyChange / marketValue) * 100) : '0.00%'})
-              </div>
-            </div>
-          </div>
-
-          {/* Currency selector – strictly bottom-right */}
-          <div className="flex justify-end">
-            <Select value={displayCurrency} onValueChange={(v) => setDisplayCurrency(v as 'CAD' | 'USD')}>
-              <SelectTrigger className="w-32 bg-white/20 backdrop-blur text-white border-white/30">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="CAD">CAD</SelectItem>
-                <SelectItem value="USD">USD</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          )}
         </div>
-      </div>
-    </div>
+
+        {/* Today's Return – dollar text-4xl, percent text-2xl */}
+        <div className="text-center">
+          <p className="text-sm text-muted-foreground">Today's Return</p>
+          {isLoading ? (
+            <div className="flex items-baseline justify-center gap-4 mt-3">
+              <Skeleton className="h-12 w-44" />
+              <Skeleton className="h-9 w-32" />
+            </div>
+          ) : (
+            <div className="flex items-baseline justify-center gap-3 mt-2">
+              <p className={`text-4xl font-bold font-sans ${dailyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatter.format(displayValue(dailyChange))}
+              </p>
+              <p className={`text-2xl font-bold font-sans ${dailyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                ({percentFormatter(dailyPercent)})
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* All-Time Return – dollar text-4xl, percent text-2xl */}
+        <div className="text-center">
+          <p className="text-sm text-muted-foreground">All-Time Return</p>
+          {isLoading ? (
+            <div className="flex items-baseline justify-center gap-4 mt-3">
+              <Skeleton className="h-12 w-44" />
+              <Skeleton className="h-9 w-32" />
+            </div>
+          ) : (
+            <div className="flex items-baseline justify-center gap-3 mt-2">
+              <p className={`text-4xl font-bold font-sans ${gainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatter.format(displayValue(gainLoss))}
+              </p>
+              <p className={`text-2xl font-bold font-sans ${gainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                ({percentFormatter(allTimePercent)})
+              </p>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

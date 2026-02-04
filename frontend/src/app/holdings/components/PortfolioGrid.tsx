@@ -1,10 +1,12 @@
+// src/app/holdings/components/PortfolioGrid.tsx (fixed – correct query invalidation for immediate reorder reflection)
 'use client';
 
-import { useQueryClient } from '@tanstack/react-query'; // ← Added
-import { toast } from 'sonner'; // ← Added
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Briefcase, Plus } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import axios from 'axios';
 import {
   DndContext,
@@ -25,27 +27,30 @@ import {
 } from '@dnd-kit/sortable';
 import { SortablePortfolioCard } from './SortablePortfolioCard';
 
-interface PortfolioWithData {
+interface PortfolioSummary {
   id: number;
   name: string;
-  is_default: boolean;
+  isDefault: boolean;
   totalValue: number;
   gainLoss: number;
+  dailyChange: number;
+  dailyPercent: number;
+  allTimePercent: number;
   pieData: { name: string; value: number }[];
 }
 
 interface Props {
-  portfoliosWithData: PortfolioWithData[];
+  portfoliosWithData: PortfolioSummary[];
   selectedPortfolioId: number | null;
   onSelectPortfolio: (id: number) => void;
-  onEditPortfolio: (p: PortfolioWithData) => void;
-  onDeletePortfolio: (p: PortfolioWithData) => void;
+  onEditPortfolio: (p: PortfolioSummary) => void;
+  onDeletePortfolio: (p: PortfolioSummary) => void;
   activeId: number | null;
   setActiveId: (id: number | null) => void;
-  currencyFormatter: Intl.NumberFormat;
   displayCurrency: 'CAD' | 'USD';
   exchangeRate: number;
   onCreateFirstPortfolio: () => void;
+  isLoading: boolean;
 }
 
 export function PortfolioGrid({
@@ -56,12 +61,12 @@ export function PortfolioGrid({
   onDeletePortfolio,
   activeId,
   setActiveId,
-  currencyFormatter,
   displayCurrency,
   exchangeRate,
   onCreateFirstPortfolio,
+  isLoading,
 }: Props) {
-  const queryClient = useQueryClient(); // ← Added
+  const queryClient = useQueryClient();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -79,7 +84,9 @@ export function PortfolioGrid({
 
       try {
         await axios.post('http://localhost:8000/portfolios/reorder', { order: newOrder });
-        queryClient.invalidateQueries({ queryKey: ['portfolios'] });
+        // Fixed: Invalidate the correct query key for immediate UI update
+        await queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
+        toast.success('Portfolio order saved');
       } catch (err) {
         toast.error('Failed to save order');
         console.error(err);
@@ -87,6 +94,33 @@ export function PortfolioGrid({
     }
     setActiveId(null);
   };
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {[...Array(6)].map((_, i) => (
+          <Card key={i} className="overflow-hidden">
+            <CardContent className="p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="h-8 w-8 rounded-full" />
+              </div>
+              <Skeleton className="h-64 w-full rounded-full" />
+              <div className="space-y-3">
+                <Skeleton className="h-6 w-full" />
+                <Skeleton className="h-6 w-3/4" />
+              </div>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {[...Array(5)].map((_, j) => (
+                  <Skeleton key={j} className="h-8 w-24 rounded-full" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
   if (portfoliosWithData.length === 0) {
     return (
@@ -115,7 +149,6 @@ export function PortfolioGrid({
               onSelect={() => onSelectPortfolio(port.id)}
               onEdit={() => onEditPortfolio(port)}
               onDelete={() => onDeletePortfolio(port)}
-              currencyFormatter={currencyFormatter}
               displayCurrency={displayCurrency}
               exchangeRate={exchangeRate}
             />
@@ -126,12 +159,11 @@ export function PortfolioGrid({
       <DragOverlay>
         {activeId ? (
           <SortablePortfolioCard
-            portfolio={portfoliosWithData.find((p) => p.id === activeId)!}
+            portfolio={portfoliosWithData.find(p => p.id === activeId)!}
             isSelected={false}
             onSelect={() => {}}
             onEdit={() => {}}
             onDelete={() => {}}
-            currencyFormatter={currencyFormatter}
             displayCurrency={displayCurrency}
             exchangeRate={exchangeRate}
           />
