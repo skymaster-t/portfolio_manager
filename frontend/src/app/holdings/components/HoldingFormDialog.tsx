@@ -1,4 +1,4 @@
-// src/app/holdings/components/HoldingFormDialog.tsx
+// src/app/holdings/components/HoldingFormDialog.tsx (updated: "Add Underlying" button now matches primary indigo style of "Add Holding")
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -102,73 +102,46 @@ export function HoldingFormDialog({
       setPortfolioId(defaultPortfolioId?.toString() || '');
       setUnderlyings([]);
     }
-  }, [selectedHolding, open, defaultPortfolioId]);
+  }, [selectedHolding, defaultPortfolioId, open]);
 
   const addUnderlying = () => {
     setUnderlyings([...underlyings, { tempId: nextTempId++, symbol: '', allocation: '' }]);
+  };
+
+  const updateUnderlying = (tempId: number, field: 'symbol' | 'allocation', value: string) => {
+    setUnderlyings(
+      underlyings.map((u) =>
+        u.tempId === tempId ? { ...u, [field]: value } : u
+      )
+    );
   };
 
   const removeUnderlying = (tempId: number) => {
     setUnderlyings(underlyings.filter((u) => u.tempId !== tempId));
   };
 
-  const updateUnderlying = (tempId: number, field: 'symbol' | 'allocation', value: string) => {
-    setUnderlyings(underlyings.map((u) => (u.tempId === tempId ? { ...u, [field]: value } : u)));
-  };
-
-  const handleTypeChange = (newType: 'stock' | 'etf') => {
-    setType(newType);
-    if (newType === 'stock') {
-      setUnderlyings([]);
-    }
-  };
-
   const handleSubmit = () => {
-    if (!symbol.trim()) {
-      toast.error('Symbol is required');
-      return;
-    }
-
-    const qty = parseFloat(quantity);
-    if (isNaN(qty) || qty <= 0) {
-      toast.error('Valid quantity (>0) is required');
-      return;
-    }
-
-    const price = parseFloat(purchasePrice);
-    if (isNaN(price) || price <= 0) {
-      toast.error('Valid purchase price (>0) is required');
-      return;
-    }
-
-    if (!portfolioId) {
-      toast.error('Portfolio is required');
+    if (!symbol.trim() || !quantity || !purchasePrice || !portfolioId) {
+      toast.error('Please fill in all required fields');
       return;
     }
 
     const payload: any = {
       symbol: symbol.trim().toUpperCase(),
       type,
-      quantity: qty,
-      purchase_price: price,
-      portfolio_id: parseInt(portfolioId),
+      quantity: Number(quantity),
+      purchase_price: Number(purchasePrice),
+      portfolio_id: Number(portfolioId),
     };
 
-    // ALWAYS include underlyings key – ensures old are deleted when switching to stock or clearing
-    const validUnderlyings = type === 'etf'
-      ? underlyings
-          .filter((u) => u.symbol.trim())
-          .map((u) => {
-            const allocStr = u.allocation.trim();
-            const alloc = allocStr === '' ? null : parseFloat(allocStr);
-            return {
-              symbol: u.symbol.trim().toUpperCase(),
-              allocation_percent: alloc !== null && !isNaN(alloc) ? alloc : null,
-            };
-          })
-      : [];
-
-    payload.underlyings = validUnderlyings;
+    if (type === 'etf' && underlyings.length > 0) {
+      payload.underlyings = underlyings
+        .filter((u) => u.symbol.trim())
+        .map((u) => ({
+          symbol: u.symbol.trim().toUpperCase(),
+          allocation_percent: u.allocation ? Number(u.allocation) : null,
+        }));
+    }
 
     onSubmit(payload);
   };
@@ -177,27 +150,35 @@ export function HoldingFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-screen overflow-y-auto rounded-2xl shadow-2xl bg-card">
+      <DialogContent className="max-w-2xl rounded-2xl shadow-2xl bg-card">
         <DialogHeader className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-2xl -m-6 mb-6 p-6">
           <DialogTitle className="text-3xl font-bold">
             {isEdit ? 'Edit Holding' : 'Add Holding'}
           </DialogTitle>
         </DialogHeader>
+
         <div className="grid gap-8">
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label>Symbol</Label>
+              <Label htmlFor="symbol" className="text-base font-medium">
+                Symbol
+              </Label>
               <Input
+                id="symbol"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 placeholder="e.g. VOO"
+                className="text-lg"
                 disabled={isPending}
               />
             </div>
+
             <div className="space-y-2">
-              <Label>Type</Label>
-              <Select value={type} onValueChange={handleTypeChange} disabled={isPending}>
-                <SelectTrigger>
+              <Label htmlFor="type" className="text-base font-medium">
+                Type
+              </Label>
+              <Select value={type} onValueChange={(v) => setType(v as 'stock' | 'etf')} disabled={isPending}>
+                <SelectTrigger id="type" className="text-lg">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -206,54 +187,69 @@ export function HoldingFormDialog({
                 </SelectContent>
               </Select>
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label>Quantity</Label>
+              <Label htmlFor="quantity" className="text-base font-medium">
+                Quantity
+              </Label>
               <Input
+                id="quantity"
                 type="number"
-                step="any"
+                step="0.000001"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
-                placeholder="e.g. 100"
+                placeholder="e.g. 10"
+                className="text-lg"
                 disabled={isPending}
               />
             </div>
+
             <div className="space-y-2">
-              <Label>Purchase Price</Label>
+              <Label htmlFor="purchase-price" className="text-base font-medium">
+                Purchase Price
+              </Label>
               <Input
+                id="purchase-price"
                 type="number"
                 step="0.01"
                 value={purchasePrice}
                 onChange={(e) => setPurchasePrice(e.target.value)}
                 placeholder="e.g. 450.00"
+                className="text-lg"
                 disabled={isPending}
               />
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <Label>Portfolio</Label>
-            <Select value={portfolioId} onValueChange={setPortfolioId} disabled={isPending}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select portfolio" />
-              </SelectTrigger>
-              <SelectContent>
-                {portfolios.map((p) => (
-                  <SelectItem key={p.id} value={p.id.toString()}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2 col-span-2">
+              <Label htmlFor="portfolio" className="text-base font-medium">
+                Portfolio
+              </Label>
+              <Select value={portfolioId} onValueChange={setPortfolioId} disabled={isPending}>
+                <SelectTrigger id="portfolio" className="text-lg">
+                  <SelectValue placeholder="Select a portfolio" />
+                </SelectTrigger>
+                <SelectContent>
+                  {portfolios.map((p) => (
+                    <SelectItem key={p.id} value={p.id.toString()}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {type === 'etf' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-medium">Underlyings</Label>
-                <Button size="sm" onClick={addUnderlying} disabled={isPending}>
+                {/* "Add Underlying" now matches primary indigo style (same as Save / Add Holding) */}
+                <Button
+                  size="sm"
+                  onClick={addUnderlying}
+                  disabled={isPending}
+                  className="bg-indigo-600 hover:bg-indigo-700"
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Underlying
                 </Button>
@@ -304,7 +300,11 @@ export function HoldingFormDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={isPending}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isPending}
+            className="bg-indigo-600 hover:bg-indigo-700"
+          >
             {isPending ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -1,4 +1,4 @@
-// src/app/holdings/components/HoldingsTable.tsx (enhanced: expandable rows with integrated chevron + underlying count badge in circle, improved sub-table with right-aligned numerics & colored daily change)
+// src/app/holdings/components/HoldingsTable.tsx (updated: edit/delete buttons have stronger, colored hover highlights + larger icons)
 'use client';
 
 import { Fragment } from 'react';
@@ -118,6 +118,7 @@ export function HoldingsTable({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead></TableHead>
                 <TableHead>Symbol</TableHead>
                 <TableHead className="text-right">Ratio</TableHead>
                 <TableHead className="text-center">Type</TableHead>
@@ -133,7 +134,8 @@ export function HoldingsTable({
             <TableBody>
               {[...Array(8)].map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell><Skeleton className="h-6 w-40" /></TableCell>
+                  <TableCell><Skeleton className="h-8 w-8 rounded" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-32" /></TableCell>
                   <TableCell className="text-right"><Skeleton className="h-6 w-20" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-20 mx-auto" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-24" /></TableCell>
@@ -181,6 +183,7 @@ export function HoldingsTable({
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead></TableHead>
               <TableHead>Symbol</TableHead>
               <TableHead className="text-right">Ratio</TableHead>
               <TableHead className="text-center">Type</TableHead>
@@ -197,7 +200,6 @@ export function HoldingsTable({
             {holdings.map((holding) => {
               const isCad = isCadTicker(holding.symbol);
               const isExpanded = expandedHoldings.has(holding.id);
-              const underlyingCount = holding.underlying_details?.length || 0;
 
               const ratio =
                 portfolioTotalValue > 0 && holding.market_value != null
@@ -207,32 +209,24 @@ export function HoldingsTable({
               return (
                 <Fragment key={holding.id}>
                   <TableRow
-                    className={hasUnderlyings(holding) ? 'cursor-pointer hover:bg-muted/50' : ''}
+                    className="cursor-pointer hover:bg-muted/50"
                     onClick={() => hasUnderlyings(holding) && onToggleExpand(holding.id)}
                   >
                     <TableCell>
-                      <div className="flex items-center gap-3">
-                        {hasUnderlyings(holding) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleExpand(holding.id);
-                            }}
-                          >
-                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          </Button>
-                        )}
-                        <span className="font-medium">{holding.symbol}</span>
-                        {holding.type === 'etf' && underlyingCount > 0 && (
-                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-800">
-                            {underlyingCount}
-                          </div>
-                        )}
-                      </div>
+                      {hasUnderlyings(holding) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleExpand(holding.id);
+                          }}
+                        >
+                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </Button>
+                      )}
                     </TableCell>
+                    <TableCell className="font-medium">{holding.symbol}</TableCell>
                     <TableCell className="text-right font-medium">
                       {holding.market_value != null ? `${ratio.toFixed(2)}%` : '-'}
                     </TableCell>
@@ -270,6 +264,7 @@ export function HoldingsTable({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
+                        {/* Edit button – stronger indigo hover highlight + larger icon */}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -277,9 +272,11 @@ export function HoldingsTable({
                             e.stopPropagation();
                             onEditHolding(holding);
                           }}
+                          className="hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
                         >
-                          <Edit className="h-4 w-4" />
+                          <Edit className="h-5 w-5" />
                         </Button>
+                        {/* Delete button – stronger red hover highlight + larger icon */}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -287,8 +284,9 @@ export function HoldingsTable({
                             e.stopPropagation();
                             onDeleteHolding(holding);
                           }}
+                          className="hover:bg-red-100 hover:text-red-700 transition-colors"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-5 w-5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -296,7 +294,7 @@ export function HoldingsTable({
 
                   {hasUnderlyings(holding) && isExpanded && (
                     <TableRow>
-                      <TableCell colSpan={10} className="bg-muted/50 p-0">
+                      <TableCell colSpan={11} className="bg-muted/50 p-0">
                         <Table>
                           <TableHeader>
                             <TableRow>

@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioHeader.tsx (reduced font sizes by ~2 Tailwind steps, modern sans-serif font)
+// src/app/holdings/components/PortfolioHeader.tsx (updated: "Add Holding" now purple/indigo, "Add Portfolio" now white with indigo icon)
 'use client';
 
 import { PlusCircle } from 'lucide-react';
@@ -77,17 +77,22 @@ export function PortfolioHeader({
               </button>
             </div>
 
-            <Button onClick={onAddPortfolio} className="bg-indigo-600 hover:bg-indigo-700">
-              <PlusCircle className="mr-2 h-5 w-5" />
+            {/* Add Portfolio – now white background with indigo icon */}
+            <Button
+              onClick={onAddPortfolio}
+              className="bg-white text-black hover:bg-gray-100 border border-gray-300 shadow-sm"
+            >
+              <PlusCircle className="mr-2 h-5 w-5 text-indigo-600" />
               Add Portfolio
             </Button>
 
+            {/* Add Holding – now purple/indigo background */}
             <Button
               onClick={onAddHolding}
               disabled={!hasSelectedPortfolio}
-              className="bg-white text-black hover:bg-gray-100 border border-gray-300 shadow-sm disabled:opacity-50"
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
             >
-              <PlusCircle className="mr-2 h-5 w-5 text-indigo-600" />
+              <PlusCircle className="mr-2 h-5 w-5" />
               Add Holding
             </Button>
           </div>

@@ -1,4 +1,4 @@
-// src/app/holdings/components/SortablePortfolioCard.tsx (updated: "Default" badge moved below title, centered horizontally, space reserved for visual consistency)
+// src/app/holdings/components/SortablePortfolioCard.tsx (updated: edit/delete buttons have stronger, colored hover highlights)
 'use client';
 
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,7 +14,6 @@ import {
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   Sector,
-  LabelList,
 } from 'recharts';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -86,28 +85,42 @@ const CustomTooltip = ({ active, payload, displayCurrency, exchangeRate }: any) 
   return null;
 };
 
-const CustomLabel = (props: any) => {
-  const { cx, cy, midAngle, outerRadius, name, value, total } = props;
+const renderCustomizedLabel = (props: any) => {
+  const { cx, cy, midAngle, innerRadius, outerRadius, name, value, total } = props;
 
-  if (!name || value <= 0 || !total) return null;
+  if (!total || value <= 0) return null;
 
   const RADIAN = Math.PI / 180;
-  const radius = outerRadius + 30;
-  let x = cx + radius * Math.cos(-midAngle * RADIAN);
-  let y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const radius = outerRadius + 40;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
   const percent = ((value / total) * 100).toFixed(1);
 
-  const isLeft = x < cx;
-  const alignX = isLeft ? x - 10 : x + 10;
+  const textLength = (name.length + percent.length + 2) * 7;
+  const padding = 10;
 
   return (
     <g>
-      <foreignObject x={alignX - 80} y={y - 20} width="160" height="40">
-        <div className="bg-gray-700 text-white text-xs font-medium rounded-lg px-3 py-1.5 shadow-lg whitespace-nowrap flex items-center justify-center">
-          {name} {percent}%
-        </div>
-      </foreignObject>
+      <rect
+        x={x - textLength / 2 - padding}
+        y={y - 14}
+        width={textLength + padding * 2}
+        height={28}
+        rx={8}
+        fill="#374151"
+        opacity={0.95}
+      />
+      <text
+        x={x}
+        y={y}
+        fill="#ffffff"
+        textAnchor="middle"
+        dominantBaseline="central"
+        className="text-xs font-medium"
+      >
+        {name} {percent}%
+      </text>
     </g>
   );
 };
@@ -147,25 +160,23 @@ export function SortablePortfolioCard({
 
   const displayValue = (cadValue: number) => displayCurrency === 'CAD' ? cadValue : cadValue / exchangeRate;
 
-  // Truncate to max 20 characters + ellipsis (original logic restored)
   const truncatedName = portfolio.name.length > 20
     ? `${portfolio.name.slice(0, 20)}...`
     : portfolio.name;
 
-  // Full data for legend
   const fullLegendEntries = portfolio.pieData;
 
-  // Pie chart data: group <8% into "Other"
   const threshold = 0.08 * portfolio.totalValue;
-  const mainHoldings = portfolio.pieData.filter(item => item.value >= threshold);
+  let mainHoldings = portfolio.pieData.filter(item => item.value >= threshold);
   const otherValue = portfolio.pieData.reduce((sum, item) => item.value < threshold ? sum + item.value : sum, 0);
+
+  mainHoldings = mainHoldings.sort((a, b) => b.value - a.value);
 
   const pieDataForChart = [...mainHoldings];
   if (otherValue > 0) {
     pieDataForChart.push({ name: 'Other', value: otherValue });
   }
 
-  // Enrich for label and tooltip
   const enrichedPieData = pieDataForChart.map(entry => ({ ...entry, total: portfolio.totalValue }));
 
   return (
@@ -177,7 +188,6 @@ export function SortablePortfolioCard({
       }`}
       onClick={onSelect}
     >
-      {/* Gradient header – now flex-col to accommodate badge below title */}
       <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-t-lg h-24 flex flex-col justify-center px-6 -mt-6">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-4">
@@ -189,16 +199,27 @@ export function SortablePortfolioCard({
             </h3>
           </div>
           <div className="flex gap-2">
-            <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
-              <Edit className="h-4 w-4" />
+            {/* Edit button – stronger indigo hover highlight */}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
+            >
+              <Edit className="h-5 w-5" />
             </Button>
-            <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
-              <Trash2 className="h-4 w-4" />
+            {/* Delete button – stronger red hover highlight */}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="hover:bg-red-100 hover:text-red-700 transition-colors"
+            >
+              <Trash2 className="h-5 w-5" />
             </Button>
           </div>
         </div>
 
-        {/* Default badge – centered below title, space always reserved for consistency */}
         <div className="mt-2 flex justify-center">
           <Badge className={!portfolio.isDefault ? 'opacity-0 pointer-events-none' : ''}>
             Default
@@ -235,17 +256,21 @@ export function SortablePortfolioCard({
           </div>
         </div>
 
-        <ResponsiveContainer width="100%" height={290}>
+        <ResponsiveContainer width="100%" height={320}>
           <PieChart>
             <Pie
               data={enrichedPieData}
               cx="50%"
               cy="50%"
               innerRadius={50}
-              outerRadius={85}
+              outerRadius={90}
               paddingAngle={3}
               dataKey="value"
               activeShape={renderActiveShape}
+              label={renderCustomizedLabel}
+              labelLine={false}
+              startAngle={90}
+              endAngle={-270}
             >
               {enrichedPieData.map((entry, index) => (
                 <Cell
@@ -253,13 +278,11 @@ export function SortablePortfolioCard({
                   fill={entry.name === 'Other' ? OTHER_COLOR : COLORS[index % COLORS.length]}
                 />
               ))}
-              <LabelList content={<CustomLabel />} />
             </Pie>
             <RechartsTooltip content={<CustomTooltip displayCurrency={displayCurrency} exchangeRate={exchangeRate} />} />
           </PieChart>
         </ResponsiveContainer>
 
-        {/* Legend shows full detailed holdings – slightly compacted */}
         <div className="flex flex-wrap justify-center gap-2">
           {fullLegendEntries.map((entry, idx) => {
             const color = COLORS[idx % COLORS.length];

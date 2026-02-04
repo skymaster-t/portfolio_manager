@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioFormDialog.tsx
+// src/app/holdings/components/PortfolioFormDialog.tsx (updated: Delete button removed from edit mode)
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -27,7 +27,7 @@ interface Props {
   selectedPortfolio: Portfolio | null;
   onSubmit: (payload: { name: string; is_default: boolean }) => void;
   isPending: boolean;
-  onOpenDeleteConfirm: () => void;
+  onOpenDeleteConfirm: () => void; // Still kept for backward compatibility (unused now)
 }
 
 export function PortfolioFormDialog({
@@ -36,12 +36,11 @@ export function PortfolioFormDialog({
   selectedPortfolio,
   onSubmit,
   isPending,
-  onOpenDeleteConfirm,
+  onOpenDeleteConfirm, // Unused after removal – can be removed from props if desired
 }: Props) {
   const [name, setName] = useState('');
   const [isDefault, setIsDefault] = useState(false);
 
-  // Prefill when editing or reset when adding
   useEffect(() => {
     if (selectedPortfolio) {
       setName(selectedPortfolio.name);
@@ -94,16 +93,16 @@ export function PortfolioFormDialog({
           </div>
         </div>
         <DialogFooter className="mt-8 pt-6 border-t border-border">
-          {isEdit && (
-            <Button variant="destructive" onClick={onOpenDeleteConfirm} disabled={isPending}>
-              Delete Portfolio
-            </Button>
-          )}
+          {/* Delete button removed entirely */}
           <div className="flex gap-3 ml-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isPending || !name.trim()}>
+            <Button
+              onClick={handleSubmit}
+              disabled={isPending || !name.trim()}
+              className="bg-indigo-600 hover:bg-indigo-700"
+            >
               {isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
