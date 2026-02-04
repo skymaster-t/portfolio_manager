@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 import logging
+from datetime import datetime
 
 # Existing logging config (kept as-is – production-ready)
 logging.basicConfig(
@@ -26,7 +27,6 @@ r = redis.Redis.from_url(REDIS_URL)
 app = FastAPI()
 
 # FIXED: Direct import of each router object (industry-standard, avoids AttributeError)
-# This is robust even if module has temporary syntax issues – error shows on import
 from app.routers.holdings import router as holdings_router
 from app.routers.portfolios import router as portfolios_router
 from app.routers.debug import router as debug_router
@@ -55,3 +55,16 @@ def get_price(ticker: str):
     if cached:
         return {"ticker": ticker, "price": float(cached), "source": "cache"}
     return {"ticker": ticker, "price": "fallback_value", "source": "db/fmp"}
+
+# NEW: Current FX rate endpoint (for frontend currency toggle)
+@app.get("/fx/current")
+def get_current_fx_rate():
+    rate_str = r.get("fx:USDCAD")
+    if rate_str:
+        rate = float(rate_str.decode("utf-8"))
+    else:
+        rate = 1.37  # Realistic fallback
+    return {
+        "usdcad_rate": rate,  # 1 USD = rate CAD
+        "timestamp": datetime.utcnow().isoformat()
+    }

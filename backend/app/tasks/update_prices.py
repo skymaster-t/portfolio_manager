@@ -3,6 +3,7 @@ from app.database import SessionLocal
 from app.models import Holding
 from app.utils.yahoo import batch_fetch_prices
 from app.celery_config import celery_app
+from app.main import r
 import logging
 import pytz
 from datetime import datetime
@@ -48,17 +49,14 @@ def update_all_prices(self, force: bool = False):
     db: Session = SessionLocal()
     try:
         holdings = db.query(Holding).options(joinedload(Holding.underlyings)).all()
-        if not holdings:
-            logger.info("CELERY TASK: No holdings found - nothing to update")
-            return "No holdings"
-
-        # Log existing DB prices
-        for h in holdings:
-            logger.debug(f"DB BEFORE {h.symbol}: price={h.current_price}, last_update={h.last_price_update}")
 
         main_symbols = {h.symbol for h in holdings}
         underlying_symbols = {u.symbol for h in holdings for u in h.underlyings}
         all_symbols = list(main_symbols.union(underlying_symbols))
+
+        # Always fetch FX rate (even if no holdings – keeps cache fresh)
+        if "USDCAD=X" not in all_symbols:
+            all_symbols.append("USDCAD=X")
 
         logger.info(f"CELERY TASK: Fetching prices for {len(all_symbols)} symbols (force={force})")
         price_map = batch_fetch_prices(all_symbols)
@@ -85,6 +83,14 @@ def update_all_prices(self, force: bool = False):
 
         db.commit()
         logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings in DB")
+
+        # Cache latest USDCAD rate (1 USD = X CAD)
+        usdcad_data = price_map.get("USDCAD=X", {})
+        usdcad_price = usdcad_data.get("price")
+        if usdcad_price is not None:
+            r.set("fx:USDCAD", usdcad_price, ex=3600)  # Cache for 1 hour
+            logger.info(f"Updated cached FX rate USDCAD=X to {usdcad_price}")
+
         return f"Updated {updated_count} holdings"
 
     except Exception as e:
@@ -93,4 +99,3 @@ def update_all_prices(self, force: bool = False):
         raise self.retry(countdown=60, max_retries=3)
     finally:
         db.close()
-        

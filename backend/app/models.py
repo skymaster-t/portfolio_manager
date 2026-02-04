@@ -83,7 +83,6 @@ class PortfolioHistory(Base):
 
     portfolio = relationship("Portfolio", back_populates="history")
 
-# NEW: Global (all portfolios combined) history snapshots
 class GlobalHistory(Base):
     __tablename__ = "global_history"
     id = Column(Integer, primary_key=True, index=True)
@@ -94,3 +93,6 @@ class GlobalHistory(Base):
     daily_percent = Column(Float)
     all_time_gain = Column(Float)
     all_time_percent = Column(Float)
+
+    # NEW: Flag to mark true end-of-day snapshots (for clean daily graphs)
+    is_eod = Column(Boolean, default=False, server_default="false")

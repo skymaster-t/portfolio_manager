@@ -57,8 +57,6 @@ def batch_fetch_prices(symbols: List[str]) -> Dict[str, Dict[str, Optional[float
                 change = price - prev_close
                 change_percent = (change / prev_close) * 100 if prev_close != 0 else 0.0
 
-                logger.info(f"Yahoo Finance SUCCESS {symbol}: price={price:.4f}, change={change:+.4f}, change%={change_percent:+.2f}%")
-
                 results[symbol] = {
                     "price": price,
                     "change": change,

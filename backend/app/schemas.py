@@ -112,4 +112,21 @@ class GlobalHistoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        
+
+class PieItem(BaseModel):
+    name: str
+    value: float
+
+class PortfolioSummary(BaseModel):
+    id: int
+    name: str
+    isDefault: bool
+    totalValue: float
+    gainLoss: float
+    dailyChange: float
+    dailyPercent: float
+    allTimePercent: float
+    pieData: List[PieItem]
+
+    class Config:
+        from_attributes = True

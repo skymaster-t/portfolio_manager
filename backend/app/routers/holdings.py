@@ -36,7 +36,6 @@ def update_holding_prices(db: Session, holdings: List[Holding], price_map: Dict[
             )
             holding.last_price_update = now
             updated += 1
-            logger.info(f"DB UPDATED (opportunistic/forced) {holding.symbol}: {old_price} → {price}")
     if updated > 0:
         db.commit()
     return updated
@@ -65,8 +64,15 @@ def enrich_underlyings(holding: Holding, price_map: Optional[Dict[str, dict]] = 
             ))
 
 @router.get("/", response_model=List[HoldingResponse])
-def get_holdings(db: Session = Depends(get_db)):
-    holdings = db.query(Holding).options(joinedload(Holding.underlyings)).all()
+def get_holdings(
+    portfolio_id: Optional[int] = Query(None, description="Optional portfolio ID to filter holdings"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Holding)
+    if portfolio_id is not None:
+        query = query.filter(Holding.portfolio_id == portfolio_id)
+
+    holdings = query.all()
     
     now = datetime.utcnow()
     symbols = [h.symbol for h in holdings]

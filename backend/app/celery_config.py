@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from dotenv import load_dotenv
 from pathlib import Path
 import os
@@ -21,7 +22,7 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     timezone="America/Toronto",
-    enable_utc=True,
+    enable_utc=False,
     broker_connection_retry_on_startup=True,
 )
 
@@ -46,4 +47,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.portfolio_history_task.save_portfolio_history_snapshot",
         "schedule": 300.0,  # every 5 minutes
     },
+    # Daily EOD global snapshot – 18:30 ET on trading days (Mon–Fri, skips holidays inside task)
+    "daily-eod-global-snapshot": {
+        "task": "app.tasks.portfolio_history_task.save_daily_global_snapshot",
+        "schedule": crontab(
+            hour=18,
+            minute=30,
+            day_of_week='mon-fri',  # Runs Mon–Fri at 18:30 ET (Toronto time)
+        ),
+    },    
 }
