@@ -1,4 +1,4 @@
-// src/app/holdings/page.tsx (updated: automatic silent data refresh every 5 minutes + manual refresh with toast)
+// src/app/holdings/page.tsx (fixed: removed infinite loop cause; lastRefreshTime updated only on manual refresh + initial load)
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 
 import { PortfolioHeader } from './components/PortfolioHeader';
+import { PortfolioValueChart } from './components/PortfolioValueChart';
 import { PortfolioGrid } from './components/PortfolioGrid';
 import { HoldingsTable } from './components/HoldingsTable';
 import { HoldingFormDialog } from './components/HoldingFormDialog';
@@ -58,6 +59,7 @@ export default function Holdings() {
   } = useQuery({
     queryKey: ['portfoliosSummaries'],
     queryFn: fetchPortfoliosSummaries,
+    refetchInterval: 300000, // Silent auto-refresh every 5 minutes
   });
 
   const {
@@ -69,6 +71,7 @@ export default function Holdings() {
       const { data } = await axios.get('http://localhost:8000/holdings');
       return data;
     },
+    refetchInterval: 300000,
   });
 
   const { data: fxRate = 1.37 } = useQuery({
@@ -78,6 +81,7 @@ export default function Holdings() {
       return data.usdcad_rate;
     },
     staleTime: 5 * 60 * 1000,
+    refetchInterval: 300000,
   });
 
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
@@ -114,38 +118,52 @@ export default function Holdings() {
     });
   };
 
-  // Refresh button loading & last refresh timestamp
+  // Manual refresh (with toast)
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'] }),
+        queryClient.refetchQueries({ queryKey: ['allHoldings'] }),
+        queryClient.refetchQueries({ queryKey: ['fxRate'] }),
+      ]);
+      setLastRefreshTime(new Date());
+      toast.success('Data refreshed');
+    } catch {
+      toast.error('Failed to refresh data');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Last refreshed time – updated on manual refresh + once on initial load
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // Update current time every minute for live relative formatting
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 60000);
+    const interval = setInterval(() => setCurrentTime(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
 
   const getRelativeTime = (): string => {
     if (!lastRefreshTime) return 'not yet';
-
     const diffMs = currentTime - lastRefreshTime.getTime();
     if (diffMs < 60000) return 'just now';
-
     const minutes = Math.floor(diffMs / 60000);
-    if (minutes < 60) {
-      return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
-    }
-
+    if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) {
-      return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    }
-
+    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
     const days = Math.floor(hours / 24);
     return `${days} day${days !== 1 ? 's' : ''} ago`;
   };
+
+  // Set initial refresh time once when data loads (prevents infinite loop)
+  useEffect(() => {
+    if (!lastRefreshTime && portfoliosSummaries.length > 0) {
+      setLastRefreshTime(new Date());
+    }
+  }, [portfoliosSummaries.length, lastRefreshTime]);
 
   useEffect(() => {
     if (portfoliosSummaries.length > 0 && selectedPortfolioId === null) {
@@ -181,46 +199,7 @@ export default function Holdings() {
     deleteHolding,
   } = usePortfolioMutations(queryClient);
 
-  // Manual refresh (with toast feedback)
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'] }),
-        queryClient.refetchQueries({ queryKey: ['allHoldings'] }),
-        queryClient.refetchQueries({ queryKey: ['fxRate'] }),
-      ]);
-
-      setLastRefreshTime(new Date());
-      toast.success('Data refreshed');
-    } catch (error) {
-      toast.error('Failed to refresh data');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // Silent automatic refresh every 5 minutes
-  const silentRefresh = async () => {
-    try {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'], type: 'inactive' }),
-        queryClient.refetchQueries({ queryKey: ['allHoldings'], type: 'inactive' }),
-        queryClient.refetchQueries({ queryKey: ['fxRate'], type: 'inactive' }),
-      ]);
-      setLastRefreshTime(new Date());
-    } catch {
-      // Silent fail – no toast on auto refresh
-    }
-  };
-
-  // Auto-refresh every 5 minutes (300000 ms)
-  useEffect(() => {
-    const interval = setInterval(silentRefresh, 300000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Shared success handler for holding add/edit
+  // Shared success handler for holding mutations
   const onHoldingSuccess = () => {
     setOpenHoldingForm(false);
     setSelectedHolding(null);
@@ -253,6 +232,8 @@ export default function Holdings() {
         }}
         hasSelectedPortfolio={!!selectedPortfolioId}
       />
+
+      <PortfolioValueChart />
 
       <PortfolioGrid
         portfoliosWithData={portfoliosSummaries}
@@ -316,7 +297,6 @@ export default function Holdings() {
         />
       )}
 
-      {/* Holding Form – closes & refreshes on success */}
       <HoldingFormDialog
         open={openHoldingForm}
         onOpenChange={setOpenHoldingForm}
@@ -362,10 +342,8 @@ export default function Holdings() {
           }
         }}
         isPending={createPortfolio.isPending || updatePortfolio.isPending}
-        onOpenDeleteConfirm={() => setOpenPortfolioDelete(true)}
       />
 
-      {/* Holding Delete – closes & refreshes on success */}
       <DeleteConfirmDialog
         open={openHoldingDelete}
         onOpenChange={setOpenHoldingDelete}

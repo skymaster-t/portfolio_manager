@@ -79,7 +79,6 @@ def update_all_prices(self, force: bool = False):
                 )
                 holding.last_price_update = now
                 updated_count += 1
-                logger.info(f"DB UPDATED {holding.symbol}: {old_price} → {price} (last_update={now})")
 
         db.commit()
         logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings in DB")

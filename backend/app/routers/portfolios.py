@@ -207,4 +207,11 @@ def get_portfolios_summaries(db: Session = Depends(get_db)):
         )
 
     return summaries
-    
+
+@router.get("/global-history", response_model=List[GlobalHistoryResponse])
+def get_global_history(db: Session = Depends(get_db)):
+    return (
+        db.query(GlobalHistory)
+        .order_by(GlobalHistory.timestamp.desc())
+        .all()  # Removed limit – returns all records (intraday + EOD), sorted newest first
+    )
