@@ -1,4 +1,3 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (fixed: correct Toronto local time, default 1Day, fixed trading hours axis for 1Day)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -18,11 +17,11 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface HistoryPoint {
-  timestamp: string; // UTC ISO string from backend (naive or with Z)
+  timestamp: string; // UTC ISO string from backend
   total_value: number;
 }
 
-type Period = 'day' | 'week' | 'month' | '3m' | 'year' | 'ytd';
+type Period = 'day' | 'week' | 'month' | '3m' | 'year' | '2y' | '3y' | 'ytd' | 'all';
 
 const TORONTO_TZ = 'America/Toronto';
 
@@ -48,7 +47,7 @@ export function PortfolioValueChart() {
   const chartData = useMemo(() => {
     if (history.length === 0) return [];
 
-    // Force UTC parse (handles both naive and Z-terminated strings safely)
+    // Force UTC parse
     const parsed = history.map((point) => {
       const iso = point.timestamp.endsWith('Z') ? point.timestamp : point.timestamp + 'Z';
       return {
@@ -58,12 +57,11 @@ export function PortfolioValueChart() {
     });
 
     const now = new Date();
-    let startDate: Date;
+    let startDate: Date | null = null;
 
     switch (period) {
       case 'day':
-        startDate = new Date(now);
-        startDate.setHours(0, 0, 0, 0);
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         break;
       case 'week':
         startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -77,16 +75,25 @@ export function PortfolioValueChart() {
       case 'year':
         startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
         break;
+      case '2y':
+        startDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
+        break;
+      case '3y':
+        startDate = new Date(now.getTime() - 1095 * 24 * 60 * 60 * 1000);
+        break;
       case 'ytd':
         startDate = new Date(now.getFullYear(), 0, 1);
         break;
-      default:
-        startDate = new Date(0);
+      case 'all':
+        startDate = null; // No filter
+        break;
     }
 
-    const filtered = parsed
-      .filter((p) => p.utcDate >= startDate)
-      .sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
+    const filtered = startDate
+      ? parsed.filter((p) => p.utcDate >= startDate)
+      : parsed;
+
+    const sorted = filtered.sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
 
     // Toronto local formatters
     const timeFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -112,7 +119,7 @@ export function PortfolioValueChart() {
       hour12: true,
     });
 
-    return filtered.map((p) => ({
+    return sorted.map((p) => ({
       timestampMs: p.utcDate.getTime(),
       value: p.value,
       label: period === 'day' ? timeFormatter.format(p.utcDate) : dateFormatter.format(p.utcDate),
@@ -233,7 +240,7 @@ export function PortfolioValueChart() {
         </ResponsiveContainer>
 
         <div className="flex flex-wrap justify-center gap-2 mt-6">
-          {(['day', 'week', 'month', '3m', 'year', 'ytd'] as Period[]).map((p) => (
+          {(['day', 'week', 'month', '3m', 'year', '2y', '3y', 'ytd', 'all'] as Period[]).map((p) => (
             <Button
               key={p}
               variant={period === p ? 'default' : 'outline'}
@@ -245,7 +252,7 @@ export function PortfolioValueChart() {
                   : 'hover:bg-indigo-50 hover:text-indigo-700'
               }
             >
-              {p === 'day' ? '1D' : p === 'week' ? '1W' : p === 'month' ? '1M' : p === '3m' ? '3M' : p === 'year' ? '1Y' : 'YTD'}
+              {p === 'day' ? '1D' : p === 'week' ? '1W' : p === 'month' ? '1M' : p === '3m' ? '3M' : p === 'year' ? '1Y' : p === '2y' ? '2Y' : p === '3y' ? '3Y' : p === 'ytd' ? 'YTD' : 'All'}
             </Button>
           ))}
         </div>
