@@ -1,4 +1,4 @@
-// src/app/holdings/components/HoldingsTable.tsx (updated: fully sortable table by clicking headers)
+// src/app/holdings/components/HoldingsTable.tsx (updated: default sort by Ratio descending)
 'use client';
 
 import { Fragment, useState, useMemo } from 'react';
@@ -73,8 +73,9 @@ export function HoldingsTable({
   exchangeRate,
   isLoading,
 }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>('symbol');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  // Default sort: Ratio descending (largest positions first)
+  const [sortKey, setSortKey] = useState<SortKey>('ratio');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const formatter = new Intl.NumberFormat(displayCurrency === 'CAD' ? 'en-CA' : 'en-US', {
     style: 'currency',
@@ -155,7 +156,7 @@ export function HoldingsTable({
           bVal = b.purchase_price;
           break;
         case 'current_price':
-          aVal = a.current_price ?? -Infinity; // nulls last
+          aVal = a.current_price ?? -Infinity;
           bVal = b.current_price ?? -Infinity;
           break;
         case 'market_value':

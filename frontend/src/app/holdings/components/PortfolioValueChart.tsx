@@ -1,3 +1,4 @@
+// src/app/holdings/components/PortfolioValueChart.tsx (updated: 1Day view domain fits data range exactly – no left blank space)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -31,7 +32,7 @@ const fetchGlobalHistory = async (): Promise<HistoryPoint[]> => {
 };
 
 export function PortfolioValueChart() {
-  const [period, setPeriod] = useState<Period>('day'); // Default to 1Day
+  const [period, setPeriod] = useState<Period>('day');
 
   const {
     data: history = [],
@@ -47,7 +48,7 @@ export function PortfolioValueChart() {
   const chartData = useMemo(() => {
     if (history.length === 0) return [];
 
-    // Force UTC parse
+    // Parse UTC timestamps
     const parsed = history.map((point) => {
       const iso = point.timestamp.endsWith('Z') ? point.timestamp : point.timestamp + 'Z';
       return {
@@ -56,46 +57,52 @@ export function PortfolioValueChart() {
       };
     });
 
-    const now = new Date();
-    let startDate: Date | null = null;
+    let filtered = parsed;
 
-    switch (period) {
-      case 'day':
-        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case 'week':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '3m':
-        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      case 'year':
-        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-        break;
-      case '2y':
-        startDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
-        break;
-      case '3y':
-        startDate = new Date(now.getTime() - 1095 * 24 * 60 * 60 * 1000);
-        break;
-      case 'ytd':
-        startDate = new Date(now.getFullYear(), 0, 1);
-        break;
-      case 'all':
-        startDate = null; // No filter
-        break;
+    if (period === 'day') {
+      // Strict: only points where Toronto local date == today
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
+      filtered = parsed.filter((p) =>
+        p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayStr
+      );
+    } else {
+      const now = new Date();
+      let startDate: Date | null = null;
+
+      switch (period) {
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '3m':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        case 'year':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        case '2y':
+          startDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
+          break;
+        case '3y':
+          startDate = new Date(now.getTime() - 1095 * 24 * 60 * 60 * 1000);
+          break;
+        case 'ytd':
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        case 'all':
+          startDate = null;
+          break;
+      }
+
+      if (startDate) {
+        filtered = parsed.filter((p) => p.utcDate >= startDate);
+      }
     }
-
-    const filtered = startDate
-      ? parsed.filter((p) => p.utcDate >= startDate)
-      : parsed;
 
     const sorted = filtered.sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
 
-    // Toronto local formatters
     const timeFormatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: TORONTO_TZ,
       hour: 'numeric',
@@ -127,20 +134,18 @@ export function PortfolioValueChart() {
     }));
   }, [history, period]);
 
-  // 1Day view: fixed trading hours domain (9:30 AM – 4:00 PM Toronto local)
+  // 1Day domain: fit exactly to data range (first point to last/now) – no blank left
   const dayDomain = useMemo(() => {
-    if (period !== 'day') return undefined;
+    if (period !== 'day' || chartData.length === 0) return undefined;
 
-    const today = new Date();
-    const open = new Date(today);
-    open.setHours(9, 30, 0, 0);
-    const close = new Date(today);
-    close.setHours(16, 0, 0, 0);
+    const times = chartData.map((d) => d.timestampMs);
+    const min = Math.min(...times);
+    const max = Math.max(...times, Date.now()); // Extend to now if last point is earlier
 
-    const end = Date.now() > close.getTime() ? close.getTime() : Date.now();
-
-    return [open.getTime(), end];
-  }, [period]);
+    // Add small padding (~5 minutes) for visual breathing room
+    const padding = 5 * 60 * 1000;
+    return [min - padding, max + padding];
+  }, [chartData, period]);
 
   const formatTick = (unixMs: number) => {
     return new Intl.DateTimeFormat('en-CA', {
@@ -223,7 +228,7 @@ export function PortfolioValueChart() {
                 return '';
               }}
               contentStyle={{
-                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                backgroundColor: 'rgba(255, 255, 0.95)',
                 border: '1px solid #e0e0e0',
                 borderRadius: '8px',
               }}
