@@ -1,4 +1,4 @@
-// src/app/holdings/page.tsx (fixed: holding add/edit/delete now close dialogs + refresh data; added missing handleToggleExpand for underlying expansion)
+// src/app/holdings/page.tsx (updated: automatic silent data refresh every 5 minutes + manual refresh with toast)
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -181,6 +181,7 @@ export default function Holdings() {
     deleteHolding,
   } = usePortfolioMutations(queryClient);
 
+  // Manual refresh (with toast feedback)
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -198,6 +199,26 @@ export default function Holdings() {
       setIsRefreshing(false);
     }
   };
+
+  // Silent automatic refresh every 5 minutes
+  const silentRefresh = async () => {
+    try {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'], type: 'inactive' }),
+        queryClient.refetchQueries({ queryKey: ['allHoldings'], type: 'inactive' }),
+        queryClient.refetchQueries({ queryKey: ['fxRate'], type: 'inactive' }),
+      ]);
+      setLastRefreshTime(new Date());
+    } catch {
+      // Silent fail – no toast on auto refresh
+    }
+  };
+
+  // Auto-refresh every 5 minutes (300000 ms)
+  useEffect(() => {
+    const interval = setInterval(silentRefresh, 300000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Shared success handler for holding add/edit
   const onHoldingSuccess = () => {
