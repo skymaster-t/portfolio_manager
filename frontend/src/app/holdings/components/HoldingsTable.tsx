@@ -1,4 +1,4 @@
-// src/app/holdings/components/HoldingsTable.tsx (added color-coded badges for both stock and ETF)
+// src/app/holdings/components/HoldingsTable.tsx (enhanced: expandable rows with integrated chevron + underlying count badge in circle, improved sub-table with right-aligned numerics & colored daily change)
 'use client';
 
 import { Fragment } from 'react';
@@ -63,8 +63,8 @@ export function HoldingsTable({
   const formatter = new Intl.NumberFormat(displayCurrency === 'CAD' ? 'en-CA' : 'en-US', {
     style: 'currency',
     currency: displayCurrency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 
   const isCadTicker = (symbol: string) => symbol.toUpperCase().endsWith('.TO');
@@ -74,6 +74,37 @@ export function HoldingsTable({
     const cadAmount = isCad ? nativeAmount : nativeAmount * exchangeRate;
     return displayCurrency === 'CAD' ? cadAmount : cadAmount / exchangeRate;
   };
+
+  const formatDailyChange = (holding: Holding) => {
+    const isCad = isCadTicker(holding.symbol);
+    if (holding.daily_change == null || holding.daily_change_percent == null) return '-';
+    const amount = formatter.format(getDisplayAmount(holding.daily_change, isCad));
+    const percent = `${holding.daily_change_percent >= 0 ? '+' : ''}${holding.daily_change_percent.toFixed(2)}%`;
+    return `${amount} (${percent})`;
+  };
+
+  const formatAllTime = (holding: Holding) => {
+    const isCad = isCadTicker(holding.symbol);
+    if (holding.all_time_gain_loss == null || holding.all_time_change_percent == null) return '-';
+    const amount = formatter.format(getDisplayAmount(holding.all_time_gain_loss, isCad));
+    const percent = `${holding.all_time_change_percent >= 0 ? '+' : ''}${holding.all_time_change_percent.toFixed(2)}%`;
+    return `${amount} (${percent})`;
+  };
+
+  const formatUnderlyingDaily = (u: any) => {
+    if (u.daily_change == null || u.daily_change_percent == null) return '-';
+    const amount = formatter.format(getDisplayAmount(u.daily_change, isCadTicker(u.symbol)));
+    const percent = `${u.daily_change_percent >= 0 ? '+' : ''}${u.daily_change_percent.toFixed(2)}%`;
+    return `${amount} (${percent})`;
+  };
+
+  const hasUnderlyings = (holding: Holding) =>
+    holding.type === 'etf' && (holding.underlying_details?.length || 0) > 0;
+
+  const portfolioTotalValue = holdings.reduce(
+    (sum, h) => sum + (h.market_value || 0),
+    0
+  );
 
   if (isLoading) {
     return (
@@ -87,22 +118,24 @@ export function HoldingsTable({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead></TableHead>
                 <TableHead>Symbol</TableHead>
+                <TableHead className="text-right">Ratio</TableHead>
+                <TableHead className="text-center">Type</TableHead>
                 <TableHead>Quantity</TableHead>
                 <TableHead>Purchase Price</TableHead>
                 <TableHead>Current Price</TableHead>
                 <TableHead>Market Value</TableHead>
                 <TableHead>Daily ∆</TableHead>
                 <TableHead>All-Time ∆</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {[...Array(8)].map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell><Skeleton className="h-8 w-8 rounded" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-32" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-40" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="h-6 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-20 mx-auto" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-32" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-32" /></TableCell>
@@ -139,30 +172,6 @@ export function HoldingsTable({
     );
   }
 
-  const hasUnderlyings = (holding: Holding) =>
-    holding.type === 'etf' && (holding.underlying_details?.length || 0) > 0;
-
-  const formatDailyChange = (holding: Holding) => {
-    const isCad = isCadTicker(holding.symbol);
-    const dailyDollarNative = (holding.daily_change || 0) * holding.quantity;
-    const displayedDollar = getDisplayAmount(Math.abs(dailyDollarNative), isCad);
-    const sign = dailyDollarNative >= 0 ? '+' : '-';
-    return `${sign}${formatter.format(displayedDollar)} (${holding.daily_change_percent?.toFixed(2) || '0.00'}%)`;
-  };
-
-  const formatAllTime = (holding: Holding) => {
-    const isCad = isCadTicker(holding.symbol);
-    const displayed = getDisplayAmount(Math.abs(holding.all_time_gain_loss || 0), isCad);
-    const sign = (holding.all_time_gain_loss || 0) >= 0 ? '+' : '-';
-    return `${sign}${formatter.format(displayed)} (${holding.all_time_change_percent?.toFixed(2) || '0.00'}%)`;
-  };
-
-  const formatUnderlyingDaily = (u: any) => {
-    if (u.daily_change_percent == null) return '-';
-    const sign = u.daily_change_percent >= 0 ? '+' : '';
-    return `${sign}${u.daily_change_percent.toFixed(2)}%`;
-  };
-
   return (
     <Card>
       <CardHeader>
@@ -172,8 +181,9 @@ export function HoldingsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12"></TableHead>
               <TableHead>Symbol</TableHead>
+              <TableHead className="text-right">Ratio</TableHead>
+              <TableHead className="text-center">Type</TableHead>
               <TableHead>Quantity</TableHead>
               <TableHead>Purchase Price</TableHead>
               <TableHead>Current Price</TableHead>
@@ -186,28 +196,53 @@ export function HoldingsTable({
           <TableBody>
             {holdings.map((holding) => {
               const isCad = isCadTicker(holding.symbol);
+              const isExpanded = expandedHoldings.has(holding.id);
+              const underlyingCount = holding.underlying_details?.length || 0;
+
+              const ratio =
+                portfolioTotalValue > 0 && holding.market_value != null
+                  ? (holding.market_value / portfolioTotalValue) * 100
+                  : 0;
+
               return (
                 <Fragment key={holding.id}>
-                  <TableRow>
+                  <TableRow
+                    className={hasUnderlyings(holding) ? 'cursor-pointer hover:bg-muted/50' : ''}
+                    onClick={() => hasUnderlyings(holding) && onToggleExpand(holding.id)}
+                  >
                     <TableCell>
-                      {hasUnderlyings(holding) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onToggleExpand(holding.id)}
-                        >
-                          {expandedHoldings.has(holding.id) ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {hasUnderlyings(holding) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleExpand(holding.id);
+                            }}
+                          >
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </Button>
+                        )}
+                        <span className="font-medium">{holding.symbol}</span>
+                        {holding.type === 'etf' && underlyingCount > 0 && (
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-800">
+                            {underlyingCount}
+                          </div>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="font-medium">
-                      {holding.symbol}
-                      {holding.type === 'stock' && <Badge variant="default" className="ml-2 bg-green-100 text-green-800">Stock</Badge>}
-                      {holding.type === 'etf' && <Badge variant="secondary" className="ml-2">ETF</Badge>}
+                    <TableCell className="text-right font-medium">
+                      {holding.market_value != null ? `${ratio.toFixed(2)}%` : '-'}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {holding.type === 'stock' && (
+                        <Badge variant="default" className="bg-green-100 text-green-800">
+                          Stock
+                        </Badge>
+                      )}
+                      {holding.type === 'etf' && <Badge variant="secondary">ETF</Badge>}
                     </TableCell>
                     <TableCell>{holding.quantity.toLocaleString()}</TableCell>
                     <TableCell>
@@ -223,10 +258,14 @@ export function HoldingsTable({
                         ? formatter.format(getDisplayAmount(holding.market_value, isCad))
                         : '-'}
                     </TableCell>
-                    <TableCell className={holding.daily_change && holding.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}>
+                    <TableCell
+                      className={`font-bold ${holding.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                    >
                       {formatDailyChange(holding)}
                     </TableCell>
-                    <TableCell className={holding.all_time_gain_loss && holding.all_time_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}>
+                    <TableCell
+                      className={`font-bold ${holding.all_time_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                    >
                       {formatAllTime(holding)}
                     </TableCell>
                     <TableCell className="text-right">
@@ -255,37 +294,40 @@ export function HoldingsTable({
                     </TableCell>
                   </TableRow>
 
-                  {hasUnderlyings(holding) && expandedHoldings.has(holding.id) && (
+                  {hasUnderlyings(holding) && isExpanded && (
                     <TableRow>
-                      <TableCell colSpan={9} className="bg-muted/50 p-0">
+                      <TableCell colSpan={10} className="bg-muted/50 p-0">
                         <Table>
                           <TableHeader>
                             <TableRow>
                               <TableHead>Underlying</TableHead>
-                              <TableHead>Allocation</TableHead>
-                              <TableHead>Price</TableHead>
-                              <TableHead>Daily ∆</TableHead>
+                              <TableHead className="text-right">Allocation</TableHead>
+                              <TableHead className="text-right">Price</TableHead>
+                              <TableHead className="text-right">Daily ∆</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {holding.underlying_details!.map((u) => {
                               const uIsCad = isCadTicker(u.symbol);
                               const uDisplayedPrice = getDisplayAmount(u.current_price, uIsCad);
+                              const dailySignClass = u.daily_change_percent >= 0 ? 'text-green-600' : 'text-red-600';
 
                               return (
                                 <TableRow key={u.symbol}>
                                   <TableCell className="font-medium">{u.symbol}</TableCell>
-                                  <TableCell>
+                                  <TableCell className="text-right">
                                     {u.allocation_percent != null
                                       ? `${u.allocation_percent.toFixed(2)}%`
                                       : 'N/A'}
                                   </TableCell>
-                                  <TableCell>
+                                  <TableCell className="text-right">
                                     {u.current_price != null
                                       ? formatter.format(uDisplayedPrice)
                                       : '-'}
                                   </TableCell>
-                                  <TableCell>{formatUnderlyingDaily(u)}</TableCell>
+                                  <TableCell className={`text-right ${dailySignClass}`}>
+                                    {formatUnderlyingDaily(u)}
+                                  </TableCell>
                                 </TableRow>
                               );
                             })}

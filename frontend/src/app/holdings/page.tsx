@@ -1,10 +1,10 @@
-// src/app/holdings/page.tsx (fixed – removed duplicate toasts from onSuccess/onError, rely on mutation hook for feedback, dialog closes on success, immediate refetch)
+// src/app/holdings/page.tsx (fixed: holding add/edit/delete now close dialogs + refresh data; added missing handleToggleExpand for underlying expansion)
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 
@@ -60,25 +60,9 @@ export default function Holdings() {
     queryFn: fetchPortfoliosSummaries,
   });
 
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
-
-  const {
-    data: selectedHoldings = [],
-    isLoading: holdingsLoading,
-  } = useQuery({
-    queryKey: ['holdings', selectedPortfolioId],
-    queryFn: async () => {
-      if (!selectedPortfolioId) return [];
-      const { data } = await axios.get(
-        `http://localhost:8000/holdings?portfolio_id=${selectedPortfolioId}`
-      );
-      return data;
-    },
-    enabled: !!selectedPortfolioId,
-  });
-
   const {
     data: allHoldings = [],
+    isLoading: allHoldingsLoading,
   } = useQuery({
     queryKey: ['allHoldings'],
     queryFn: async () => {
@@ -96,9 +80,16 @@ export default function Holdings() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
+
+  const selectedHoldings = useMemo(
+    () => (selectedPortfolioId ? allHoldings.filter((h: Holding) => h.portfolio_id === selectedPortfolioId) : []),
+    [allHoldings, selectedPortfolioId]
+  );
+
   const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
 
-  const isLoading = summariesLoading || holdingsLoading;
+  const isLoading = summariesLoading || allHoldingsLoading;
 
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
   const [selectedPortfolio, setSelectedPortfolio] = useState<PortfolioSummary | null>(null);
@@ -108,6 +99,54 @@ export default function Holdings() {
   const [openHoldingDelete, setOpenHoldingDelete] = useState(false);
   const [openPortfolioDelete, setOpenPortfolioDelete] = useState(false);
 
+  // Expandable underlying holdings state
+  const [expandedHoldings, setExpandedHoldings] = useState<Set<number>>(new Set());
+
+  const handleToggleExpand = (id: number) => {
+    setExpandedHoldings((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // Refresh button loading & last refresh timestamp
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  // Update current time every minute for live relative formatting
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getRelativeTime = (): string => {
+    if (!lastRefreshTime) return 'not yet';
+
+    const diffMs = currentTime - lastRefreshTime.getTime();
+    if (diffMs < 60000) return 'just now';
+
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 60) {
+      return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+    }
+
+    const days = Math.floor(hours / 24);
+    return `${days} day${days !== 1 ? 's' : ''} ago`;
+  };
+
   useEffect(() => {
     if (portfoliosSummaries.length > 0 && selectedPortfolioId === null) {
       const defaultPort = portfoliosSummaries.find(p => p.isDefault) || portfoliosSummaries[0];
@@ -115,7 +154,6 @@ export default function Holdings() {
     }
   }, [portfoliosSummaries, selectedPortfolioId]);
 
-  // Combined totals for header
   const combinedSummary = useMemo(() => {
     if (portfoliosSummaries.length === 0) return null;
     const total = portfoliosSummaries.reduce((sum, p) => sum + p.totalValue, 0);
@@ -144,25 +182,35 @@ export default function Holdings() {
   } = usePortfolioMutations(queryClient);
 
   const handleRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
-    await queryClient.invalidateQueries({ queryKey: ['holdings', selectedPortfolioId] });
-    await queryClient.invalidateQueries({ queryKey: ['allHoldings'] });
-    await queryClient.invalidateQueries({ queryKey: ['fxRate'] });
-    toast.success('Data refreshed');
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'] }),
+        queryClient.refetchQueries({ queryKey: ['allHoldings'] }),
+        queryClient.refetchQueries({ queryKey: ['fxRate'] }),
+      ]);
+
+      setLastRefreshTime(new Date());
+      toast.success('Data refreshed');
+    } catch (error) {
+      toast.error('Failed to refresh data');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Shared success handler for holding add/edit
+  const onHoldingSuccess = () => {
+    setOpenHoldingForm(false);
+    setSelectedHolding(null);
+    queryClient.invalidateQueries({ queryKey: ['allHoldings'] });
+    queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
   };
 
   const plainPortfolios = portfoliosSummaries.map(p => ({ id: p.id, name: p.name }));
 
   return (
     <div className="container mx-auto p-6 space-y-12">
-      <div className="flex justify-end">
-        <Button variant="outline" onClick={handleRefresh}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh Data
-        </Button>
-      </div>
-
-      {/* Header shows combined totals */}
       <PortfolioHeader
         totalValue={combinedSummary?.totalValue || 0}
         gainLoss={combinedSummary?.gainLoss || 0}
@@ -208,12 +256,31 @@ export default function Holdings() {
         isLoading={isLoading}
       />
 
+      <div className="flex justify-end items-center gap-6">
+        <span className="text-sm text-muted-foreground">
+          {isRefreshing ? 'Refreshing data...' : `Last refreshed: ${getRelativeTime()}`}
+        </span>
+        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+          {isRefreshing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Refreshing...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh Data
+            </>
+          )}
+        </Button>
+      </div>
+
       {selectedPortfolioId && selectedSummary && (
         <HoldingsTable
           holdings={selectedHoldings}
           portfolioName={selectedSummary.name}
-          expandedHoldings={new Set()}
-          onToggleExpand={() => {}}
+          expandedHoldings={expandedHoldings}
+          onToggleExpand={handleToggleExpand}
           onEditHolding={h => {
             setSelectedHolding(h);
             setOpenHoldingForm(true);
@@ -228,21 +295,26 @@ export default function Holdings() {
         />
       )}
 
+      {/* Holding Form – closes & refreshes on success */}
       <HoldingFormDialog
         open={openHoldingForm}
         onOpenChange={setOpenHoldingForm}
         selectedHolding={selectedHolding}
         portfolios={plainPortfolios}
         defaultPortfolioId={selectedPortfolioId}
-        onSubmit={payload =>
-          selectedHolding
-            ? updateHolding.mutate({ id: selectedHolding.id, data: payload })
-            : addHolding.mutate(payload)
-        }
+        onSubmit={payload => {
+          if (selectedHolding) {
+            updateHolding.mutate(
+              { id: selectedHolding.id, data: payload },
+              { onSuccess: onHoldingSuccess }
+            );
+          } else {
+            addHolding.mutate(payload, { onSuccess: onHoldingSuccess });
+          }
+        }}
         isPending={addHolding.isPending || updateHolding.isPending}
       />
 
-      {/* Fixed PortfolioFormDialog – no local toast (hook handles it), close & refetch on success */}
       <PortfolioFormDialog
         open={openPortfolioForm}
         onOpenChange={setOpenPortfolioForm}
@@ -272,6 +344,7 @@ export default function Holdings() {
         onOpenDeleteConfirm={() => setOpenPortfolioDelete(true)}
       />
 
+      {/* Holding Delete – closes & refreshes on success */}
       <DeleteConfirmDialog
         open={openHoldingDelete}
         onOpenChange={setOpenHoldingDelete}
@@ -283,7 +356,17 @@ export default function Holdings() {
             <span className="text-destructive mt-4 font-medium">This action cannot be undone.</span>
           </p>
         }
-        onConfirm={() => selectedHolding && deleteHolding.mutate(selectedHolding.id)}
+        onConfirm={() =>
+          selectedHolding &&
+          deleteHolding.mutate(selectedHolding.id, {
+            onSuccess: () => {
+              setOpenHoldingDelete(false);
+              setSelectedHolding(null);
+              queryClient.invalidateQueries({ queryKey: ['allHoldings'] });
+              queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
+            },
+          })
+        }
         isPending={deleteHolding.isPending}
       />
 

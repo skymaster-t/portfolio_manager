@@ -1,4 +1,4 @@
-// src/app/holdings/components/SortablePortfolioCard.tsx (fixed – title truncated at 20 characters with ellipsis, no overflow pushing buttons, header flush & consistent height)
+// src/app/holdings/components/SortablePortfolioCard.tsx (updated: "Default" badge moved below title, centered horizontally, space reserved for visual consistency)
 'use client';
 
 import { Card, CardContent } from '@/components/ui/card';
@@ -51,7 +51,7 @@ const renderActiveShape = (props: any) => {
         cx={cx}
         cy={cy}
         innerRadius={innerRadius}
-        outerRadius={outerRadius + 10}
+        outerRadius={outerRadius + 8}
         startAngle={startAngle}
         endAngle={endAngle}
         fill={fill}
@@ -92,7 +92,7 @@ const CustomLabel = (props: any) => {
   if (!name || value <= 0 || !total) return null;
 
   const RADIAN = Math.PI / 180;
-  const radius = outerRadius + 40;
+  const radius = outerRadius + 30;
   let x = cx + radius * Math.cos(-midAngle * RADIAN);
   let y = cy + radius * Math.sin(-midAngle * RADIAN);
 
@@ -103,8 +103,8 @@ const CustomLabel = (props: any) => {
 
   return (
     <g>
-      <foreignObject x={alignX - 80} y={y - 25} width="160" height="50">
-        <div className="bg-gray-700 text-white text-xs font-medium rounded-lg px-4 py-2 shadow-lg whitespace-nowrap flex items-center justify-center">
+      <foreignObject x={alignX - 80} y={y - 20} width="160" height="40">
+        <div className="bg-gray-700 text-white text-xs font-medium rounded-lg px-3 py-1.5 shadow-lg whitespace-nowrap flex items-center justify-center">
           {name} {percent}%
         </div>
       </foreignObject>
@@ -177,16 +177,8 @@ export function SortablePortfolioCard({
       }`}
       onClick={onSelect}
     >
-      {/* Gradient header – flush with top */}
-      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-t-lg h-28 flex items-center px-6 -mt-6 relative">
-        {/* Default badge – centered above title */}
-        {portfolio.isDefault && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2">
-            <Badge>Default</Badge>
-          </div>
-        )}
-
-        {/* Main row – grip, truncated title, buttons */}
+      {/* Gradient header – now flex-col to accommodate badge below title */}
+      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-t-lg h-24 flex flex-col justify-center px-6 -mt-6">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-4">
             <div {...attributes} {...listeners} className="cursor-grab touch-none">
@@ -205,9 +197,16 @@ export function SortablePortfolioCard({
             </Button>
           </div>
         </div>
+
+        {/* Default badge – centered below title, space always reserved for consistency */}
+        <div className="mt-2 flex justify-center">
+          <Badge className={!portfolio.isDefault ? 'opacity-0 pointer-events-none' : ''}>
+            Default
+          </Badge>
+        </div>
       </div>
 
-      <CardContent className="p-6 space-y-6">
+      <CardContent className="px-6 py-4 space-y-4">
         <div className="text-center">
           <p className="text-4xl font-bold">
             {formatter.format(displayValue(portfolio.totalValue))}
@@ -215,7 +214,7 @@ export function SortablePortfolioCard({
           <p className="text-sm text-muted-foreground mt-1">Total Value</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-6 text-center">
+        <div className="grid grid-cols-2 gap-4 text-center">
           <div>
             <p className="text-sm text-muted-foreground">Today's Return</p>
             <p className={`text-2xl font-bold ${portfolio.dailyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -236,14 +235,14 @@ export function SortablePortfolioCard({
           </div>
         </div>
 
-        <ResponsiveContainer width="100%" height={340}>
+        <ResponsiveContainer width="100%" height={290}>
           <PieChart>
             <Pie
               data={enrichedPieData}
               cx="50%"
               cy="50%"
-              innerRadius={60}
-              outerRadius={100}
+              innerRadius={50}
+              outerRadius={85}
               paddingAngle={3}
               dataKey="value"
               activeShape={renderActiveShape}
@@ -260,7 +259,7 @@ export function SortablePortfolioCard({
           </PieChart>
         </ResponsiveContainer>
 
-        {/* Legend shows full detailed holdings */}
+        {/* Legend shows full detailed holdings – slightly compacted */}
         <div className="flex flex-wrap justify-center gap-2">
           {fullLegendEntries.map((entry, idx) => {
             const color = COLORS[idx % COLORS.length];
@@ -271,7 +270,7 @@ export function SortablePortfolioCard({
             return (
               <div
                 key={entry.name}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-medium"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-muted text-muted-foreground text-xs font-medium"
               >
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
                 <span>{entry.name}</span>
