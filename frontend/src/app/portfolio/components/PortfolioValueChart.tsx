@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (updated: clean line chart – no area fill)
+// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' view with full 24h axis from 12:00 AM to 11:59 PM Toronto time, but NO line plotted beyond the last actual data point)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -46,66 +46,83 @@ export function PortfolioValueChart() {
   });
 
   const chartData = useMemo(() => {
-    if (history.length === 0) return [];
+    if (history.length === 0) return { data: [], useTimeAxis: false, domain: undefined };
 
-    // Parse UTC timestamps
-    const parsed = history.map((point) => {
-      const iso = point.timestamp.endsWith('Z') ? point.timestamp : point.timestamp + 'Z';
-      return {
-        utcDate: new Date(iso),
-        value: point.total_value,
-      };
-    });
+    // Parse UTC timestamps and sort chronologically (oldest → newest)
+    const parsed = history
+      .map((point) => {
+        const iso = point.timestamp.endsWith('Z') ? point.timestamp : point.timestamp + 'Z';
+        return {
+          utcDate: new Date(iso),
+          value: point.total_value,
+        };
+      })
+      .sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
 
+    const isDayPeriod = period === 'day';
+
+    // Filter for today (Toronto local date) when in 'day' mode
     let filtered = parsed;
-
-    if (period === 'day') {
-      // Strict: only points where Toronto local date == today
+    if (isDayPeriod) {
       const todayToronto = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
-      filtered = parsed.filter((p) => p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayToronto);
-    } else {
-      // For all other periods, use the full history (or add more filters later if needed)
-      filtered = parsed;
+      filtered = parsed.filter(
+        (p) => p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayToronto
+      );
+    }
+    // For other periods we currently use the full history (filtering/down-sampling can be added later)
+
+    if (filtered.length === 0) return { data: [], useTimeAxis: false, domain: undefined };
+
+    // Calculate full-day domain only for 'day' period (browser timezone assumed to match Toronto)
+    let domain: [number, number] | undefined = undefined;
+    if (isDayPeriod) {
+      const nowLocal = new Date();
+      const midnightLocal = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0);
+      const startMs = midnightLocal.getTime();
+      const endMs = startMs + 24 * 60 * 60 * 1000 - 1000; // 23:59:59
+      domain = [startMs, endMs];
     }
 
-    // Format for chart
-    return filtered.map((p) => {
-      let label: string;
-      let tooltipLabel: string;
+    // Build chart points
+    const data = filtered.map((p) => {
+      const tooltipLabel = isDayPeriod
+        ? p.utcDate.toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : p.utcDate.toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          });
 
-      if (period === 'day') {
-        label = p.utcDate.toLocaleTimeString('en-CA', {
-          timeZone: TORONTO_TZ,
-          hour: 'numeric',
-          minute: '2-digit',
-        });
-        tooltipLabel = p.utcDate.toLocaleString('en-CA', {
-          timeZone: TORONTO_TZ,
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        });
-      } else {
-        label = p.utcDate.toLocaleDateString('en-CA', {
-          timeZone: TORONTO_TZ,
-          month: 'short',
-          day: 'numeric',
-        });
-        tooltipLabel = p.utcDate.toLocaleString('en-CA', {
-          timeZone: TORONTO_TZ,
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        });
+      if (isDayPeriod) {
+        return {
+          time: p.utcDate.getTime(),
+          value: p.value,
+          tooltipLabel,
+        };
       }
+
+      const label = p.utcDate.toLocaleDateString('en-CA', {
+        timeZone: TORONTO_TZ,
+        month: 'short',
+        day: 'numeric',
+      });
 
       return {
         label,
-        tooltipLabel,
         value: p.value,
+        tooltipLabel,
       };
     });
+
+    return { data, useTimeAxis: isDayPeriod, domain };
   }, [history, period]);
 
   if (isLoading) {
@@ -118,7 +135,7 @@ export function PortfolioValueChart() {
     );
   }
 
-  if (chartData.length === 0) {
+  if (chartData.data.length === 0) {
     return (
       <Card>
         <CardContent className="pt-6 text-center text-muted-foreground">
@@ -132,10 +149,22 @@ export function PortfolioValueChart() {
     <Card>
       <CardContent className="pt-6">
         <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <LineChart data={chartData.data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
             <XAxis
-              dataKey="label"
+              dataKey={chartData.useTimeAxis ? 'time' : 'label'}
+              type={chartData.useTimeAxis ? 'number' : 'category'}
+              domain={chartData.domain}
+              tickFormatter={
+                chartData.useTimeAxis
+                  ? (ms: number) =>
+                      new Date(ms).toLocaleTimeString('en-CA', {
+                        timeZone: TORONTO_TZ,
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })
+                  : undefined
+              }
               tick={{ fontSize: 12 }}
               interval="preserveStartEnd"
             />
@@ -161,7 +190,7 @@ export function PortfolioValueChart() {
               }
               labelFormatter={(_, payload) => {
                 if (payload && payload.length > 0) {
-                  return `Time: ${payload[0].payload.tooltipLabel}`;
+                  return payload[0].payload.tooltipLabel;
                 }
                 return '';
               }}
