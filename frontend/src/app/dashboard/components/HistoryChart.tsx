@@ -1,4 +1,4 @@
-// src/app/dashboard/components/HistoryChart.tsx (unchanged – reusable line chart)
+// src/app/dashboard/components/HistoryChart.tsx (updated: dynamic Y-axis with ±10% padding around data range)
 'use client';
 
 import {
@@ -60,12 +60,38 @@ interface Props {
 export function HistoryChart({ data }: Props) {
   if (data.length === 0) return null;
 
+  // Compute Y-axis domain: ±10% padding around actual data range
+  const values = data.map((d) => d.value);
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+
+  let yLower = dataMin;
+  let yUpper = dataMax;
+
+  if (dataMin === dataMax) {
+    // Flat line – symmetric ±10%
+    yLower = dataMin * 0.9;
+    yUpper = dataMin * 1.1;
+  } else {
+    const range = dataMax - dataMin;
+    const padding = range * 0.1;
+    yLower = dataMin - padding;
+    yUpper = dataMax + padding;
+  }
+
+  // Optional: force Y-axis to start at 0 if all values ≥ 0 (common for portfolio total value charts)
+  // Uncomment if you prefer the axis to never go below zero:
+  // if (dataMin >= 0) yLower = Math.max(0, yLower);
+
+  const yDomain: [number, number] = [yLower, yUpper];
+
   return (
     <ResponsiveContainer width="100%" height={400}>
       <LineChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
         <XAxis dataKey="label" tick={{ fontSize: 12 }} />
         <YAxis
+          domain={yDomain}
           tick={{ fontSize: 12 }}
           tickFormatter={(value) =>
             new Intl.NumberFormat('en-CA', {

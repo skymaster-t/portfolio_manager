@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' view with full 24h axis from 12:00 AM to 11:59 PM Toronto time, but NO line plotted beyond the last actual data point)
+// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' line always starts at 08:00 with carried-forward value, ends at last real snapshot – no future extension)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -46,7 +46,7 @@ export function PortfolioValueChart() {
   });
 
   const chartData = useMemo(() => {
-    if (history.length === 0) return { data: [], useTimeAxis: false, domain: undefined };
+    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined };
 
     // Parse UTC timestamps and sort chronologically (oldest → newest)
     const parsed = history
@@ -61,7 +61,7 @@ export function PortfolioValueChart() {
 
     const isDayPeriod = period === 'day';
 
-    // Filter for today (Toronto local date) when in 'day' mode
+    // Filter for today (Toronto local date)
     let filtered = parsed;
     if (isDayPeriod) {
       const todayToronto = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
@@ -69,60 +69,107 @@ export function PortfolioValueChart() {
         (p) => p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayToronto
       );
     }
-    // For other periods we currently use the full history (filtering/down-sampling can be added later)
 
-    if (filtered.length === 0) return { data: [], useTimeAxis: false, domain: undefined };
+    // Fixed window for 'day': 08:00 – 21:00 Toronto time
+    let startMs: number | undefined = undefined;
+    let endMs: number | undefined = undefined;
+    let ticks: number[] | undefined = undefined;
 
-    // Calculate full-day domain only for 'day' period (browser timezone assumed to match Toronto)
-    let domain: [number, number] | undefined = undefined;
     if (isDayPeriod) {
-      const nowLocal = new Date();
-      const midnightLocal = new Date(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0);
-      const startMs = midnightLocal.getTime();
-      const endMs = startMs + 24 * 60 * 60 * 1000 - 1000; // 23:59:59
-      domain = [startMs, endMs];
-    }
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = today.getMonth();
+      const day = today.getDate();
 
-    // Build chart points
-    const data = filtered.map((p) => {
-      const tooltipLabel = isDayPeriod
-        ? p.utcDate.toLocaleString('en-CA', {
-            timeZone: TORONTO_TZ,
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          })
-        : p.utcDate.toLocaleString('en-CA', {
-            timeZone: TORONTO_TZ,
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-          });
+      const midnightMs = new Date(year, month, day, 0, 0, 0, 0).getTime();
+      const hourMs = 60 * 60 * 1000;
 
-      if (isDayPeriod) {
-        return {
-          time: p.utcDate.getTime(),
-          value: p.value,
-          tooltipLabel,
-        };
+      startMs = midnightMs + 8 * hourMs;   // 08:00
+      endMs = midnightMs + 21 * hourMs;   // 21:00
+
+      // Hourly ticks 08:00 – 21:00
+      ticks = [];
+      for (let h = 8; h <= 21; h++) {
+        ticks.push(midnightMs + h * hourMs);
       }
 
-      const label = p.utcDate.toLocaleDateString('en-CA', {
+      // Clip to window
+      filtered = filtered.filter((p) => {
+        const t = p.utcDate.getTime();
+        return t >= startMs! && t <= endMs!;
+      });
+    }
+
+    if (filtered.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined };
+
+    // Build real data points
+    const realData = filtered.map((p) => ({
+      time: p.utcDate.getTime(),
+      value: p.value,
+      tooltipLabel: p.utcDate.toLocaleString('en-CA', {
         timeZone: TORONTO_TZ,
         month: 'short',
         day: 'numeric',
-      });
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }),
+    }));
 
-      return {
-        label,
-        value: p.value,
-        tooltipLabel,
-      };
-    });
+    // For 'day' period: add carried-forward point at 08:00 if first real point is later
+    let data = realData;
+    if (isDayPeriod) {
+      const firstTime = realData[0].time;
+      if (firstTime > startMs!) {
+        const carriedTooltip = new Date(startMs!).toLocaleString('en-CA', {
+          timeZone: TORONTO_TZ,
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }) + ' (carried forward)';
 
-    return { data, useTimeAxis: isDayPeriod, domain };
+        data = [
+          {
+            time: startMs!,
+            value: realData[0].value,
+            tooltipLabel: carriedTooltip,
+          },
+          ...realData,
+        ];
+      }
+    }
+
+    // Y-axis ±10% padding (using real values only)
+    const realValues = filtered.map((p) => p.value);
+    const dataMin = Math.min(...realValues);
+    const dataMax = Math.max(...realValues);
+
+    let yLower = dataMin;
+    let yUpper = dataMax;
+
+    if (dataMin === dataMax) {
+      yLower = dataMin * 0.9;
+      yUpper = dataMin * 1.1;
+    } else {
+      const range = dataMax - dataMin;
+      const padding = range * 0.1;
+      yLower = dataMin - padding;
+      yUpper = dataMax + padding;
+    }
+
+    const yDomain: [number, number] = [yLower, yUpper];
+
+    const xDomain = isDayPeriod ? [startMs!, endMs!] : undefined;
+
+    return {
+      data,
+      useTimeAxis: isDayPeriod,
+      xDomain,
+      yDomain,
+      ticks,
+    };
   }, [history, period]);
 
   if (isLoading) {
@@ -154,21 +201,23 @@ export function PortfolioValueChart() {
             <XAxis
               dataKey={chartData.useTimeAxis ? 'time' : 'label'}
               type={chartData.useTimeAxis ? 'number' : 'category'}
-              domain={chartData.domain}
+              domain={chartData.xDomain}
+              ticks={chartData.ticks}
               tickFormatter={
                 chartData.useTimeAxis
                   ? (ms: number) =>
                       new Date(ms).toLocaleTimeString('en-CA', {
                         timeZone: TORONTO_TZ,
-                        hour: 'numeric',
+                        hour: '2-digit',
                         minute: '2-digit',
+                        hour12: false,
                       })
                   : undefined
               }
               tick={{ fontSize: 12 }}
-              interval="preserveStartEnd"
             />
             <YAxis
+              domain={chartData.yDomain}
               tick={{ fontSize: 12 }}
               tickFormatter={(value) =>
                 new Intl.NumberFormat('en-CA', {
