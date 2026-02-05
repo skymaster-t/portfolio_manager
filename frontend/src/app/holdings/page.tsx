@@ -1,395 +1,134 @@
-// src/app/holdings/page.tsx (updated: forced background refetch every 5 min even when tab inactive + chart updates)
+// frontend/src/app/holdings/page.tsx (UPDATED – uses API_BASE env var for all fetches)
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
-import { RefreshCw, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import PortfolioSelector from './components/PortfolioSelector';
+import SummaryCards from './components/SummaryCards';
+import AllocationPie from './components/AllocationPie';
+import HoldingsTable from './components/HoldingsTable';
+import { Card, CardContent } from '@/components/ui/card';
 
-import { PortfolioHeader } from './components/PortfolioHeader';
-import { PortfolioValueChart } from './components/PortfolioValueChart';
-import { PortfolioGrid } from './components/PortfolioGrid';
-import { HoldingsTable } from './components/HoldingsTable';
-import { HoldingFormDialog } from './components/HoldingFormDialog';
-import { PortfolioFormDialog } from './components/PortfolioFormDialog';
-import { DeleteConfirmDialog } from './components/DeleteConfirmDialog';
-import { usePortfolioMutations } from './hooks/usePortfolioMutations';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
-interface Holding {
-  id: number;
-  symbol: string;
-  type: 'stock' | 'etf';
-  quantity: number;
-  purchase_price: number;
-  current_price?: number;
-  market_value?: number;
-  daily_change?: number;
-  daily_change_percent?: number;
-  all_time_gain_loss?: number;
-  portfolio_id: number;
-  underlyings?: { id: number; symbol: string; allocation_percent?: number }[];
-  underlying_details?: any[];
-}
-
-interface PortfolioSummary {
-  id: number;
-  name: string;
-  isDefault: boolean;
-  totalValue: number;
-  gainLoss: number;
-  dailyChange: number;
-  dailyPercent: number;
-  allTimePercent: number;
-  pieData: { name: string; value: number }[];
-}
-
-const fetchPortfoliosSummaries = async (): Promise<PortfolioSummary[]> => {
-  const { data } = await axios.get('http://localhost:8000/portfolios/summaries');
-  return data;
-};
-
-export default function Holdings() {
-  const queryClient = useQueryClient();
+export default function HoldingsPage() {
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
 
   const {
-    data: portfoliosSummaries = [],
+    data: summaries = [],
     isLoading: summariesLoading,
+    isError: summariesError,
   } = useQuery({
-    queryKey: ['portfoliosSummaries'],
-    queryFn: fetchPortfoliosSummaries,
-    refetchInterval: 300000, // Every 5 minutes
-    refetchIntervalInBackground: true, // Force even when tab inactive
+    queryKey: ['portfolios-summary'],
+    queryFn: () => fetch(`${API_BASE}/portfolios/summary`).then(res => {
+      if (!res.ok) throw new Error('Failed to fetch summaries');
+      return res.json();
+    }),
+    refetchInterval: 300000, // 5 minutes
   });
 
   const {
     data: allHoldings = [],
-    isLoading: allHoldingsLoading,
+    isLoading: holdingsLoading,
+    isError: holdingsError,
   } = useQuery({
-    queryKey: ['allHoldings'],
-    queryFn: async () => {
-      const { data } = await axios.get('http://localhost:8000/holdings');
-      return data;
-    },
+    queryKey: ['holdings'],
+    queryFn: () => fetch(`${API_BASE}/holdings`).then(res => {
+      if (!res.ok) throw new Error('Failed to fetch holdings');
+      return res.json();
+    }),
     refetchInterval: 300000,
-    refetchIntervalInBackground: true,
   });
-
-  const { data: fxRate = 1.37 } = useQuery({
-    queryKey: ['fxRate'],
-    queryFn: async () => {
-      const { data } = await axios.get('http://localhost:8000/fx/current');
-      return data.usdcad_rate;
-    },
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 300000,
-    refetchIntervalInBackground: true,
-  });
-
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<number | null>(null);
-
-  const selectedHoldings = useMemo(
-    () => (selectedPortfolioId ? allHoldings.filter((h: Holding) => h.portfolio_id === selectedPortfolioId) : []),
-    [allHoldings, selectedPortfolioId]
-  );
-
-  const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
-
-  const isLoading = summariesLoading || allHoldingsLoading;
-
-  const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
-  const [selectedPortfolio, setSelectedPortfolio] = useState<PortfolioSummary | null>(null);
-
-  const [openHoldingForm, setOpenHoldingForm] = useState(false);
-  const [openPortfolioForm, setOpenPortfolioForm] = useState(false);
-  const [openHoldingDelete, setOpenHoldingDelete] = useState(false);
-  const [openPortfolioDelete, setOpenPortfolioDelete] = useState(false);
-
-  const [expandedHoldings, setExpandedHoldings] = useState<Set<number>>(new Set());
-
-  const handleToggleExpand = (id: number) => {
-    setExpandedHoldings((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
-
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ['portfoliosSummaries'] }),
-        queryClient.refetchQueries({ queryKey: ['allHoldings'] }),
-        queryClient.refetchQueries({ queryKey: ['fxRate'] }),
-      ]);
-      toast.success('Data refreshed');
-    } catch {
-      toast.error('Failed to refresh data');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
-  const [currentTime, setCurrentTime] = useState(Date.now());
-
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(Date.now()), 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const getRelativeTime = (): string => {
-    if (!lastRefreshTime) return 'not yet';
-    const diffMs = currentTime - lastRefreshTime.getTime();
-    if (diffMs < 60000) return 'just now';
-    const minutes = Math.floor(diffMs / 60000);
-    if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    const days = Math.floor(hours / 24);
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
-  };
-
-  // Update last refresh time on any successful refetch (auto or manual)
-  useEffect(() => {
-    if (portfoliosSummaries.length > 0) {
-      setLastRefreshTime(new Date());
-    }
-  }, [portfoliosSummaries]);
-
-  useEffect(() => {
-    if (portfoliosSummaries.length > 0 && selectedPortfolioId === null) {
-      const defaultPort = portfoliosSummaries.find(p => p.isDefault) || portfoliosSummaries[0];
-      setSelectedPortfolioId(defaultPort.id);
-    }
-  }, [portfoliosSummaries, selectedPortfolioId]);
-
-  const combinedSummary = useMemo(() => {
-    if (portfoliosSummaries.length === 0) return null;
-    const total = portfoliosSummaries.reduce((sum, p) => sum + p.totalValue, 0);
-    const daily = portfoliosSummaries.reduce((sum, p) => sum + p.dailyChange, 0);
-    const gain = portfoliosSummaries.reduce((sum, p) => sum + p.gainLoss, 0);
-    const dailyPercent = total > 0 ? (daily / (total - daily) * 100) : 0;
-    const allTimePercent = total > 0 ? (gain / (total - gain) * 100) : 0;
-    return {
-      totalValue: total,
-      gainLoss: gain,
-      dailyChange: daily,
-      dailyPercent,
-      allTimePercent,
-    };
-  }, [portfoliosSummaries]);
-
-  const selectedSummary = portfoliosSummaries.find(p => p.id === selectedPortfolioId);
 
   const {
-    createPortfolio,
-    updatePortfolio,
-    deletePortfolio,
-    addHolding,
-    updateHolding,
-    deleteHolding,
-  } = usePortfolioMutations(queryClient);
+    data: fxData,
+    isError: fxError,
+  } = useQuery({
+    queryKey: ['fx'],
+    queryFn: () => fetch(`${API_BASE}/fx/current`).then(res => {
+      if (!res.ok) throw new Error('Failed to fetch FX rate');
+      return res.json();
+    }),
+    refetchInterval: 3600000, // 1 hour
+  });
 
-  const onHoldingSuccess = () => {
-    setOpenHoldingForm(false);
-    setSelectedHolding(null);
-    queryClient.invalidateQueries({ queryKey: ['allHoldings'] });
-    queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
-  };
+  const rate = fxData?.usdcad_rate || 1.37;
 
-  const plainPortfolios = portfoliosSummaries.map(p => ({ id: p.id, name: p.name }));
+  useEffect(() => {
+    if (summaries.length > 0 && selectedPortfolioId === null) {
+      const defaultPort = summaries.find((p: any) => p.isDefault);
+      setSelectedPortfolioId(defaultPort?.id ?? summaries[0]?.id);
+    }
+  }, [summaries, selectedPortfolioId]);
+
+  if (summariesLoading || holdingsLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Card className="p-8">
+          <CardContent className="text-center">Loading portfolio data...</CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (summariesError || holdingsError || fxError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Card className="p-8 max-w-md">
+          <CardContent className="text-center space-y-4">
+            <p className="text-lg font-medium text-red-600">Failed to load data</p>
+            <p className="text-sm text-gray-600">
+              Unable to reach the backend API. Check:
+            </p>
+            <ul className="text-sm text-gray-500 text-left space-y-1">
+              <li>• FastAPI server running on port 8000</li>
+              <li>• NEXT_PUBLIC_API_BASE in .env.local points to the correct URL</li>
+              <li>• No network/firewall issues</li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (summaries.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <Card className="p-8">
+          <CardContent className="text-center">
+            <p className="text-lg font-medium">No portfolios found</p>
+            <p className="text-sm text-gray-600 mt-2">Create a portfolio to get started.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const selectedSummary = summaries.find((p: any) => p.id === selectedPortfolioId) || summaries[0];
+  const selectedHoldings = allHoldings.filter((h: any) => h.portfolio_id === selectedPortfolioId);
 
   return (
-    <div className="container mx-auto p-6 space-y-12">
-      <PortfolioHeader
-        totalValue={combinedSummary?.totalValue || 0}
-        gainLoss={combinedSummary?.gainLoss || 0}
-        dailyChange={combinedSummary?.dailyChange || 0}
-        dailyPercent={combinedSummary?.dailyPercent || 0}
-        allTimePercent={combinedSummary?.allTimePercent || 0}
-        marketValue={combinedSummary?.totalValue || 0}
-        displayCurrency={displayCurrency}
-        setDisplayCurrency={setDisplayCurrency}
-        exchangeRate={fxRate}
-        isLoading={isLoading}
-        onAddPortfolio={() => {
-          setSelectedPortfolio(null);
-          setOpenPortfolioForm(true);
-        }}
-        onAddHolding={() => {
-          setSelectedHolding(null);
-          setOpenHoldingForm(true);
-        }}
-        hasSelectedPortfolio={!!selectedPortfolioId}
-      />
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <h1 className="text-3xl font-bold text-gray-900">Holdings</h1>
+          <PortfolioSelector
+            portfolios={summaries}
+            selectedId={selectedPortfolioId}
+            onSelect={setSelectedPortfolioId}
+          />
+        </div>
 
-      <PortfolioValueChart />
-
-      <PortfolioGrid
-        portfoliosWithData={portfoliosSummaries}
-        selectedPortfolioId={selectedPortfolioId}
-        onSelectPortfolio={setSelectedPortfolioId}
-        onEditPortfolio={p => {
-          setSelectedPortfolio(p);
-          setOpenPortfolioForm(true);
-        }}
-        onDeletePortfolio={p => {
-          setSelectedPortfolio(p);
-          setOpenPortfolioDelete(true);
-        }}
-        activeId={null}
-        setActiveId={() => {}}
-        displayCurrency={displayCurrency}
-        exchangeRate={fxRate}
-        onCreateFirstPortfolio={() => {
-          setSelectedPortfolio(null);
-          setOpenPortfolioForm(true);
-        }}
-        isLoading={isLoading}
-      />
-
-      <div className="flex justify-end items-center gap-6">
-        <span className="text-sm text-muted-foreground">
-          {isRefreshing ? 'Refreshing data...' : `Last refreshed: ${getRelativeTime()}`}
-        </span>
-        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-          {isRefreshing ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Refreshing...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Refresh Data
-            </>
-          )}
-        </Button>
+        <SummaryCards summary={selectedSummary} />
+        <div className="grid lg:grid-cols-3 gap-8 mt-8">
+          <div className="lg:col-span-1">
+            <AllocationPie pieData={selectedSummary?.pieData || []} />
+          </div>
+          <div className="lg:col-span-2">
+            <HoldingsTable holdings={selectedHoldings} totalValue={selectedSummary?.totalValue || 0} rate={rate} />
+          </div>
+        </div>
       </div>
-
-      {selectedPortfolioId && selectedSummary && (
-        <HoldingsTable
-          holdings={selectedHoldings}
-          portfolioName={selectedSummary.name}
-          expandedHoldings={expandedHoldings}
-          onToggleExpand={handleToggleExpand}
-          onEditHolding={h => {
-            setSelectedHolding(h);
-            setOpenHoldingForm(true);
-          }}
-          onDeleteHolding={h => {
-            setSelectedHolding(h);
-            setOpenHoldingDelete(true);
-          }}
-          displayCurrency={displayCurrency}
-          exchangeRate={fxRate}
-          isLoading={isLoading}
-        />
-      )}
-
-      <HoldingFormDialog
-        open={openHoldingForm}
-        onOpenChange={setOpenHoldingForm}
-        selectedHolding={selectedHolding}
-        portfolios={plainPortfolios}
-        defaultPortfolioId={selectedPortfolioId}
-        onSubmit={payload => {
-          if (selectedHolding) {
-            updateHolding.mutate(
-              { id: selectedHolding.id, data: payload },
-              { onSuccess: onHoldingSuccess }
-            );
-          } else {
-            addHolding.mutate(payload, { onSuccess: onHoldingSuccess });
-          }
-        }}
-        isPending={addHolding.isPending || updateHolding.isPending}
-      />
-
-      <PortfolioFormDialog
-        open={openPortfolioForm}
-        onOpenChange={setOpenPortfolioForm}
-        selectedPortfolio={selectedPortfolio ? { id: selectedPortfolio.id, name: selectedPortfolio.name, is_default: selectedPortfolio.isDefault } : null}
-        onSubmit={(payload) => {
-          if (selectedPortfolio?.id) {
-            updatePortfolio.mutate(
-              { id: selectedPortfolio.id, data: payload },
-              {
-                onSuccess: () => {
-                  setOpenPortfolioForm(false);
-                  setSelectedPortfolio(null);
-                  queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
-                },
-              }
-            );
-          } else {
-            createPortfolio.mutate(payload, {
-              onSuccess: () => {
-                setOpenPortfolioForm(false);
-                queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
-              },
-            });
-          }
-        }}
-        isPending={createPortfolio.isPending || updatePortfolio.isPending}
-      />
-
-      <DeleteConfirmDialog
-        open={openHoldingDelete}
-        onOpenChange={setOpenHoldingDelete}
-        title="Delete Holding"
-        message={
-          <p className="text-lg">
-            Are you sure you want to delete <strong>{selectedHolding?.symbol}</strong>?
-            <br />
-            <span className="text-destructive mt-4 font-medium">This action cannot be undone.</span>
-          </p>
-        }
-        onConfirm={() =>
-          selectedHolding &&
-          deleteHolding.mutate(selectedHolding.id, {
-            onSuccess: () => {
-              setOpenHoldingDelete(false);
-              setSelectedHolding(null);
-              queryClient.invalidateQueries({ queryKey: ['allHoldings'] });
-              queryClient.invalidateQueries({ queryKey: ['portfoliosSummaries'] });
-            },
-          })
-        }
-        isPending={deleteHolding.isPending}
-      />
-
-      <DeleteConfirmDialog
-        open={openPortfolioDelete}
-        onOpenChange={setOpenPortfolioDelete}
-        title="Delete Portfolio"
-        message={
-          selectedPortfolio && (
-            <>
-              <p className="text-lg mb-4">
-                Are you sure you want to delete "<strong>{selectedPortfolio.name}</strong>"?
-              </p>
-              {allHoldings.filter(h => h.portfolio_id === selectedPortfolio.id).length > 0 ? (
-                <p className="text-destructive font-medium">
-                  This will <strong>permanently delete</strong> the portfolio and all its holdings.
-                </p>
-              ) : (
-                <p className="text-muted-foreground">This portfolio has no holdings.</p>
-              )}
-            </>
-          )
-        }
-        onConfirm={() => selectedPortfolio && deletePortfolio.mutate(selectedPortfolio.id)}
-        isPending={deletePortfolio.isPending}
-      />
     </div>
   );
 }

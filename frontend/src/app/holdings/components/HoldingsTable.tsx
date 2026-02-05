@@ -1,7 +1,7 @@
-// src/app/holdings/components/HoldingsTable.tsx (updated: default sort by Ratio descending)
+// frontend/src/app/holdings/components/HoldingsTable.tsx
 'use client';
 
-import { Fragment, useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import {
   Table,
   TableBody,
@@ -10,11 +10,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Edit, Trash2, ChevronRight, ChevronDown, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+
+interface UnderlyingDetail {
+  symbol: string;
+  allocation_percent: number | null;
+  current_price: number | null;
+  daily_change_percent: number | null;
+}
 
 interface Holding {
   id: number;
@@ -22,478 +27,224 @@ interface Holding {
   type: 'stock' | 'etf';
   quantity: number;
   purchase_price: number;
-  current_price?: number;
-  market_value?: number;
-  daily_change?: number;
-  daily_change_percent?: number;
-  all_time_gain_loss?: number;
-  all_time_change_percent?: number;
-  underlying_details?: {
-    symbol: string;
-    allocation_percent?: number | null;
-    current_price?: number;
-    daily_change?: number;
-    daily_change_percent?: number;
-  }[];
+  current_price: number | null;
+  market_value: number | null;
+  daily_change_percent: number | null;
+  all_time_change_percent: number | null;
+  currency: 'CAD' | 'USD';
+  underlying_details: UnderlyingDetail[];
 }
 
 interface Props {
   holdings: Holding[];
-  portfolioName: string;
-  expandedHoldings: Set<number>;
-  onToggleExpand: (id: number) => void;
-  onEditHolding: (h: Holding) => void;
-  onDeleteHolding: (h: Holding) => void;
-  displayCurrency: 'CAD' | 'USD';
-  exchangeRate: number;
-  isLoading: boolean;
+  totalValue: number;
+  rate: number;
 }
+
+const formatCAD = (val: number) => val.toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+const formatNative = (val: number, currency: 'CAD' | 'USD') =>
+  val.toLocaleString(currency === 'CAD' ? 'en-CA' : 'en-US', { style: 'currency', currency });
+const formatPercent = (val: number | null) => (val === null ? '—' : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`);
 
 type SortKey =
   | 'symbol'
-  | 'ratio'
-  | 'type'
+  | 'currency'
   | 'quantity'
-  | 'purchase_price'
-  | 'current_price'
+  | 'avg_cost'
+  | 'price'
   | 'market_value'
-  | 'daily_change'
-  | 'all_time_gain_loss';
+  | 'percent'
+  | 'daily'
+  | 'total';
 
-type SortDirection = 'asc' | 'desc';
+export default function HoldingsTable({ holdings, totalValue, rate }: Props) {
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [sortKey, setSortKey] = useState<SortKey>('percent');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-export function HoldingsTable({
-  holdings,
-  portfolioName,
-  expandedHoldings,
-  onToggleExpand,
-  onEditHolding,
-  onDeleteHolding,
-  displayCurrency,
-  exchangeRate,
-  isLoading,
-}: Props) {
-  // Default sort: Ratio descending (largest positions first)
-  const [sortKey, setSortKey] = useState<SortKey>('ratio');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-
-  const formatter = new Intl.NumberFormat(displayCurrency === 'CAD' ? 'en-CA' : 'en-US', {
-    style: 'currency',
-    currency: displayCurrency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-  const isCadTicker = (symbol: string) => symbol.toUpperCase().endsWith('.TO');
-
-  const getDisplayAmount = (nativeAmount: number | undefined, isCad: boolean): number => {
-    if (nativeAmount === undefined || nativeAmount === null) return 0;
-    const cadAmount = isCad ? nativeAmount : nativeAmount * exchangeRate;
-    return displayCurrency === 'CAD' ? cadAmount : cadAmount / exchangeRate;
+  const toggleExpand = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const formatDailyChange = (holding: Holding) => {
-    const isCad = isCadTicker(holding.symbol);
-    if (holding.daily_change == null || holding.daily_change_percent == null) return '-';
-    const amount = formatter.format(getDisplayAmount(holding.daily_change, isCad));
-    const percent = `${holding.daily_change_percent >= 0 ? '+' : ''}${holding.daily_change_percent.toFixed(2)}%`;
-    return `${amount} (${percent})`;
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDirection('desc');
+    }
   };
 
-  const formatAllTime = (holding: Holding) => {
-    const isCad = isCadTicker(holding.symbol);
-    if (holding.all_time_gain_loss == null || holding.all_time_change_percent == null) return '-';
-    const amount = formatter.format(getDisplayAmount(holding.all_time_gain_loss, isCad));
-    const percent = `${holding.all_time_change_percent >= 0 ? '+' : ''}${holding.all_time_change_percent.toFixed(2)}%`;
-    return `${amount} (${percent})`;
-  };
+  const enrichedHoldings = useMemo(() => {
+    return holdings
+      .filter((h) => h.symbol.toLowerCase().includes(search.toLowerCase()))
+      .map((h) => {
+        const conversion = h.currency === 'CAD' ? 1 : rate;
+        const nativeMV = h.market_value || 0;
+        const marketCAD = nativeMV * conversion;
+        const currentCAD = h.current_price ? h.current_price * conversion : null;
+        const avgCostCAD = h.purchase_price * conversion;
+        const percent = totalValue > 0 ? (marketCAD / totalValue) * 100 : 0;
 
-  const formatUnderlyingDaily = (u: any) => {
-    if (u.daily_change == null || u.daily_change_percent == null) return '-';
-    const amount = formatter.format(getDisplayAmount(u.daily_change, isCadTicker(u.symbol)));
-    const percent = `${u.daily_change_percent >= 0 ? '+' : ''}${u.daily_change_percent.toFixed(2)}%`;
-    return `${amount} (${percent})`;
-  };
+        return { ...h, marketCAD, currentCAD, avgCostCAD, percent };
+      });
+  }, [holdings, search, totalValue, rate]);
 
-  const hasUnderlyings = (holding: Holding) =>
-    holding.type === 'etf' && (holding.underlying_details?.length || 0) > 0;
-
-  // Compute portfolio total for ratio sorting
-  const portfolioTotalValue = useMemo(
-    () => holdings.reduce((sum, h) => sum + (h.market_value || 0), 0),
-    [holdings]
-  );
-
-  // Sorted holdings
   const sortedHoldings = useMemo(() => {
-    const sorted = [...holdings];
-
-    sorted.sort((a, b) => {
-      let aVal: any;
-      let bVal: any;
+    return [...enrichedHoldings].sort((a, b) => {
+      let aVal: any = 0;
+      let bVal: any = 0;
 
       switch (sortKey) {
         case 'symbol':
           aVal = a.symbol.toLowerCase();
           bVal = b.symbol.toLowerCase();
           break;
-        case 'ratio':
-          const aRatio = portfolioTotalValue > 0 && a.market_value ? (a.market_value / portfolioTotalValue) * 100 : 0;
-          const bRatio = portfolioTotalValue > 0 && b.market_value ? (b.market_value / portfolioTotalValue) * 100 : 0;
-          aVal = aRatio;
-          bVal = bRatio;
-          break;
-        case 'type':
-          aVal = a.type;
-          bVal = b.type;
+        case 'currency':
+          aVal = a.currency;
+          bVal = b.currency;
           break;
         case 'quantity':
-          aVal = a.quantity;
-          bVal = b.quantity;
+          aVal = a.quantity || 0;
+          bVal = b.quantity || 0;
           break;
-        case 'purchase_price':
-          aVal = a.purchase_price;
-          bVal = b.purchase_price;
+        case 'avg_cost':
+          aVal = a.avgCostCAD;
+          bVal = b.avgCostCAD;
           break;
-        case 'current_price':
-          aVal = a.current_price ?? -Infinity;
-          bVal = b.current_price ?? -Infinity;
+        case 'price':
+          aVal = a.currentCAD ?? -Infinity;
+          bVal = b.currentCAD ?? -Infinity;
           break;
         case 'market_value':
-          aVal = a.market_value ?? -Infinity;
-          bVal = b.market_value ?? -Infinity;
+          aVal = a.marketCAD;
+          bVal = b.marketCAD;
           break;
-        case 'daily_change':
-          aVal = (a.daily_change ?? 0) * a.quantity;
-          bVal = (b.daily_change ?? 0) * b.quantity;
+        case 'percent':
+          aVal = a.percent;
+          bVal = b.percent;
           break;
-        case 'all_time_gain_loss':
-          aVal = a.all_time_gain_loss ?? -Infinity;
-          bVal = b.all_time_gain_loss ?? -Infinity;
+        case 'daily':
+          aVal = a.daily_change_percent ?? -Infinity;
+          bVal = b.daily_change_percent ?? -Infinity;
           break;
+        case 'total':
+          aVal = a.all_time_change_percent ?? -Infinity;
+          bVal = b.all_time_change_percent ?? -Infinity;
+          break;
+      }
+
+      if (typeof aVal === 'string') {
+        return sortDirection === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
       if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-
-    return sorted;
-  }, [holdings, sortKey, sortDirection, portfolioTotalValue]);
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortDirection('asc');
-    }
-  };
-
-  const SortIcon = ({ column }: { column: SortKey }) => {
-    if (sortKey !== column) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-40" />;
-    return sortDirection === 'asc' ? (
-      <ArrowUp className="ml-2 h-4 w-4" />
-    ) : (
-      <ArrowDown className="ml-2 h-4 w-4" />
-    );
-  };
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl">
-            <Skeleton className="h-8 w-64" />
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead></TableHead>
-                <TableHead>Symbol</TableHead>
-                <TableHead className="text-right">Ratio</TableHead>
-                <TableHead className="text-center">Type</TableHead>
-                <TableHead>Quantity</TableHead>
-                <TableHead>Purchase Price</TableHead>
-                <TableHead>Current Price</TableHead>
-                <TableHead>Market Value</TableHead>
-                <TableHead>Daily ∆</TableHead>
-                <TableHead>All-Time ∆</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {[...Array(8)].map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-8 w-8 rounded" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-32" /></TableCell>
-                  <TableCell className="text-right"><Skeleton className="h-6 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-20 mx-auto" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-48" /></TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Skeleton className="h-8 w-8 rounded" />
-                      <Skeleton className="h-8 w-8 rounded" />
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-    );
-  }
+  }, [enrichedHoldings, sortKey, sortDirection]);
 
   if (holdings.length === 0) {
     return (
-      <Card className="mt-16">
-        <CardHeader>
-          <CardTitle className="text-2xl">Holdings – {portfolioName}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-center py-12 text-muted-foreground">
-            No holdings yet – add one using the button above.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="text-center py-12 text-muted-foreground">
+        No holdings in this portfolio
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-2xl">Holdings – {portfolioName}</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="space-y-6">
+      <Input
+        placeholder="Search by symbol..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="max-w-md"
+      />
+
+      <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12"></TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('symbol')}
-              >
-                <div className="flex items-center">
-                  Symbol
-                  <SortIcon column="symbol" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="text-right cursor-pointer select-none"
-                onClick={() => handleSort('ratio')}
-              >
-                <div className="flex items-center justify-end">
-                  Ratio
-                  <SortIcon column="ratio" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="text-center cursor-pointer select-none"
-                onClick={() => handleSort('type')}
-              >
-                <div className="flex items-center justify-center">
-                  Type
-                  <SortIcon column="type" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('quantity')}
-              >
-                <div className="flex items-center">
-                  Quantity
-                  <SortIcon column="quantity" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('purchase_price')}
-              >
-                <div className="flex items-center">
-                  Purchase Price
-                  <SortIcon column="purchase_price" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('current_price')}
-              >
-                <div className="flex items-center">
-                  Current Price
-                  <SortIcon column="current_price" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('market_value')}
-              >
-                <div className="flex items-center">
-                  Market Value
-                  <SortIcon column="market_value" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('daily_change')}
-              >
-                <div className="flex items-center">
-                  Daily ∆
-                  <SortIcon column="daily_change" />
-                </div>
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => handleSort('all_time_gain_loss')}
-              >
-                <div className="flex items-center">
-                  All-Time ∆
-                  <SortIcon column="all_time_gain_loss" />
-                </div>
-              </TableHead>
-              <TableHead className="text-right w-24">Actions</TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('symbol')}>Symbol{sortKey === 'symbol' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('currency')}>Currency{sortKey === 'currency' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('quantity')}>Quantity{sortKey === 'quantity' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('avg_cost')}>Avg. Cost{sortKey === 'avg_cost' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('price')}>Current Price{sortKey === 'price' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('market_value')}>Market Value{sortKey === 'market_value' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('percent')}>% of Portfolio{sortKey === 'percent' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('daily')}>Daily Change{sortKey === 'daily' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left"><button className="flex items-center gap-1 font-medium hover:text-foreground/80" onClick={() => handleSort('total')}>Total Return{sortKey === 'total' && (sortDirection === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}</button></TableHead>
+              <TableHead className="text-left" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sortedHoldings.map((holding) => {
-              const isCad = isCadTicker(holding.symbol);
-              const isExpanded = expandedHoldings.has(holding.id);
-
-              const ratio =
-                portfolioTotalValue > 0 && holding.market_value != null
-                  ? (holding.market_value / portfolioTotalValue) * 100
-                  : 0;
+            {sortedHoldings.map((h) => {
+              const isExpandable = h.type === 'etf' && h.underlying_details.length > 0;
+              const isExpanded = expanded.has(h.id);
 
               return (
-                <Fragment key={holding.id}>
+                <Fragment key={h.id}>
                   <TableRow
-                    className={hasUnderlyings(holding) ? 'cursor-pointer hover:bg-muted/50' : ''}
-                    onClick={() => hasUnderlyings(holding) && onToggleExpand(holding.id)}
+                    className={isExpandable ? 'cursor-pointer hover:bg-muted/30' : ''}
+                    onClick={() => isExpandable && toggleExpand(h.id)}
                   >
-                    <TableCell>
-                      {hasUnderlyings(holding) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleExpand(holding.id);
-                          }}
-                        >
-                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        </Button>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-medium">{holding.symbol}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {holding.market_value != null ? `${ratio.toFixed(2)}%` : '-'}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {holding.type === 'stock' && (
-                        <Badge variant="default" className="bg-green-100 text-green-800">
-                          Stock
-                        </Badge>
-                      )}
-                      {holding.type === 'etf' && <Badge variant="secondary">ETF</Badge>}
-                    </TableCell>
-                    <TableCell>{holding.quantity.toLocaleString()}</TableCell>
-                    <TableCell>
-                      {formatter.format(getDisplayAmount(holding.purchase_price, isCad))}
-                    </TableCell>
-                    <TableCell>
-                      {holding.current_price != null
-                        ? formatter.format(getDisplayAmount(holding.current_price, isCad))
-                        : '-'}
-                    </TableCell>
-                    <TableCell>
-                      {holding.market_value != null
-                        ? formatter.format(getDisplayAmount(holding.market_value, isCad))
-                        : '-'}
-                    </TableCell>
-                    <TableCell
-                      className={`font-bold ${holding.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}
-                    >
-                      {formatDailyChange(holding)}
-                    </TableCell>
-                    <TableCell
-                      className={`font-bold ${holding.all_time_gain_loss >= 0 ? 'text-green-600' : 'text-red-600'}`}
-                    >
-                      {formatAllTime(holding)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEditHolding(holding);
-                          }}
-                          className="hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
-                        >
-                          <Edit className="h-5 w-5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteHolding(holding);
-                          }}
-                          className="hover:bg-red-100 hover:text-red-700 transition-colors"
-                        >
-                          <Trash2 className="h-5 w-5" />
-                        </Button>
+                    <TableCell className="text-left font-medium">
+                      <div className="flex items-center">
+                        {isExpandable && (
+                          <ChevronRight
+                            className={`h-4 w-4 mr-2 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                          />
+                        )}
+                        {h.symbol}
+                        {isExpandable && (
+                          <Badge variant="secondary" className="ml-2 rounded-full w-6 h-6 p-0 flex items-center justify-center text-xs">
+                            {h.underlying_details.length}
+                          </Badge>
+                        )}
                       </div>
                     </TableCell>
+                    <TableCell className="text-left"><Badge variant="outline">{h.currency}</Badge></TableCell>
+                    <TableCell className="text-left">{h.quantity.toLocaleString()}</TableCell>
+                    <TableCell className="text-left">{formatNative(h.purchase_price, h.currency)}</TableCell>
+                    <TableCell className="text-left">{h.current_price ? formatNative(h.current_price, h.currency) : '—'}</TableCell>
+                    <TableCell className="text-left">{h.market_value ? formatNative(h.market_value, h.currency) : '—'}</TableCell>
+                    <TableCell className="text-left font-medium">{h.percent.toFixed(1)}%</TableCell>
+                    <TableCell className={`text-left font-semibold ${h.daily_change_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatPercent(h.daily_change_percent)}</TableCell>
+                    <TableCell className={`text-left font-semibold ${h.all_time_change_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatPercent(h.all_time_change_percent)}</TableCell>
+                    <TableCell className="text-left" />
                   </TableRow>
 
-                  {hasUnderlyings(holding) && isExpanded && (
-                    <TableRow>
-                      <TableCell colSpan={11} className="bg-muted/50 p-0">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Underlying</TableHead>
-                              <TableHead className="text-right">Allocation</TableHead>
-                              <TableHead className="text-right">Price</TableHead>
-                              <TableHead className="text-right">Daily ∆</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {holding.underlying_details!.map((u) => {
-                              const uIsCad = isCadTicker(u.symbol);
-                              const uDisplayedPrice = getDisplayAmount(u.current_price, uIsCad);
-                              const dailySignClass = u.daily_change_percent >= 0 ? 'text-green-600' : 'text-red-600';
-
-                              return (
-                                <TableRow key={u.symbol}>
-                                  <TableCell className="font-medium">{u.symbol}</TableCell>
-                                  <TableCell className="text-right">
-                                    {u.allocation_percent != null
-                                      ? `${u.allocation_percent.toFixed(2)}%`
-                                      : 'N/A'}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    {u.current_price != null
-                                      ? formatter.format(uDisplayedPrice)
-                                      : '-'}
-                                  </TableCell>
-                                  <TableCell className={`text-right ${dailySignClass}`}>
-                                    {formatUnderlyingDaily(u)}
-                                  </TableCell>
+                  {isExpanded && (
+                    <TableRow key={`${h.id}-details`}>
+                      <TableCell colSpan={10} className="p-0 bg-muted/20">
+                        <div className="p-6">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="text-left">Underlying</TableHead>
+                                <TableHead className="text-left">Allocation %</TableHead>
+                                <TableHead className="text-left">Price</TableHead>
+                                <TableHead className="text-left">Daily %</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {h.underlying_details.map((u, i) => (
+                                <TableRow key={i}>
+                                  <TableCell className="text-left">{u.symbol}</TableCell>
+                                  <TableCell className="text-left">{u.allocation_percent?.toFixed(1) ?? '—'}%</TableCell>
+                                  <TableCell className="text-left">{u.current_price ? formatNative(u.current_price, h.currency) : '—'}</TableCell>
+                                  <TableCell className={`text-left font-medium ${u.daily_change_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatPercent(u.daily_change_percent)}</TableCell>
                                 </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )}
@@ -502,7 +253,7 @@ export function HoldingsTable({
             })}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

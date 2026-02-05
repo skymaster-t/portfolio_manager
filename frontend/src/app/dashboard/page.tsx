@@ -1,7 +1,10 @@
+// src/app/dashboard/page.tsx (updated: uses new PeriodSelector component)
 'use client';
 
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
+import { format, parseISO, subDays, subMonths, subYears, startOfYear } from 'date-fns';
 import {
   Card,
   CardContent,
@@ -10,194 +13,150 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { format, parseISO } from 'date-fns';
-import { TrendingUp, TrendingDown, DollarSign, Calendar } from 'lucide-react';
+import { HistoryChart } from './components/HistoryChart';
+import { HistoryTable } from './components/HistoryTable';
+import { PeriodSelector } from './components/PeriodSelector';
 
 interface GlobalHistory {
   timestamp: string;
   total_value: number;
   daily_change: number;
   daily_percent: number;
-  all_time_gain: number;
   all_time_percent: number;
 }
+
+type Period = '1W' | '1M' | '3M' | 'YTD' | '1Y' | '2Y' | '3Y' | 'All';
 
 const fetchDailyGlobalHistory = async (): Promise<GlobalHistory[]> => {
   const { data } = await axios.get('http://localhost:8000/portfolios/global/history/daily');
   return data;
 };
 
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat('en-CA', {
-    style: 'currency',
-    currency: 'CAD', // Change to 'USD' if preferred, or make dynamic later
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-};
+export default function DashboardPage() {
+  const [period, setPeriod] = useState<Period>('1M');
 
-const formatPercent = (value: number) => {
-  return `${value.toFixed(2)}%`;
-};
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="rounded-lg border bg-background p-4 shadow-sm">
-        <p className="font-semibold">{format(parseISO(label), 'MMM d, yyyy')}</p>
-        <p className="text-lg font-bold">{formatCurrency(data.total_value)}</p>
-        <p className={data.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}>
-          {data.daily_change >= 0 ? <TrendingUp className="inline h-4 w-4" /> : <TrendingDown className="inline h-4 w-4" />}
-          {' '}{formatCurrency(Math.abs(data.daily_change))} ({formatPercent(data.daily_percent)})
-        </p>
-        <p className="text-muted-foreground">
-          All-time return: <span className={data.all_time_percent >= 0 ? 'text-green-600' : 'text-red-600'}>
-            {formatPercent(data.all_time_percent)}
-          </span>
-        </p>
-      </div>
-    );
-  }
-  return null;
-};
-
-export default function Dashboard() {
-  const { data: history = [], isLoading, isError } = useQuery({
+  const {
+    data: rawHistory = [],
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['dailyGlobalHistory'],
     queryFn: fetchDailyGlobalHistory,
-    refetchInterval: 5 * 60 * 1000, // Refresh every 5 min (in case new EOD arrives)
+    refetchInterval: 300000,
+    staleTime: 300000,
   });
 
-  const latest = history[history.length - 1];
+  const { chartData, tableData } = useMemo(() => {
+    if (rawHistory.length === 0) return { chartData: [], tableData: [] };
+
+    const now = new Date();
+
+    let startDate: Date | null = null;
+    switch (period) {
+      case '1W':
+        startDate = subDays(now, 7);
+        break;
+      case '1M':
+        startDate = subMonths(now, 1);
+        break;
+      case '3M':
+        startDate = subMonths(now, 3);
+        break;
+      case 'YTD':
+        startDate = startOfYear(now);
+        break;
+      case '1Y':
+        startDate = subYears(now, 1);
+        break;
+      case '2Y':
+        startDate = subYears(now, 2);
+        break;
+      case '3Y':
+        startDate = subYears(now, 3);
+        break;
+      case 'All':
+        startDate = null;
+        break;
+    }
+
+    const parsed = rawHistory
+      .map((point) => ({
+        date: parseISO(point.timestamp),
+        ...point,
+      }))
+      .filter((p) => !startDate || p.date >= startDate);
+
+    const chart = parsed
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((p) => ({
+        label: format(p.date, 'MMM d'),
+        tooltipLabel: format(p.date, 'MMM d, yyyy'),
+        value: p.total_value,
+        daily_change: p.daily_change,
+        daily_percent: p.daily_percent,
+        all_time_percent: p.all_time_percent,
+      }));
+
+    const table = parsed
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .slice(0, 20)
+      .map((p) => ({
+        tooltipLabel: format(p.date, 'MMM d, yyyy'),
+        value: p.total_value,
+        daily_change: p.daily_change,
+        daily_percent: p.daily_percent,
+        all_time_percent: p.all_time_percent,
+      }));
+
+    return { chartData: chart, tableData: table };
+  }, [rawHistory, period]);
 
   return (
-    <div className="container mx-auto p-6 space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight">Portfolio Dashboard</h1>
-          <p className="text-muted-foreground mt-2">Combined performance across all portfolios</p>
-        </div>
-        <Calendar className="h-8 w-8 text-muted-foreground" />
+    <div className="container mx-auto py-8">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_780px] gap-8">
+        {/* Chart Card */}
+        <Card className="h-fit">
+          <CardHeader>
+            <CardTitle>Portfolio Value Over Time</CardTitle>
+            <CardDescription>Daily total value trend</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-96 w-full rounded-lg" />
+            ) : chartData.length === 0 ? (
+              <div className="flex h-96 items-center justify-center text-muted-foreground">
+                No data for selected period
+              </div>
+            ) : (
+              <HistoryChart data={chartData} />
+            )}
+
+            {/* Period selector now in its own component */}
+            <PeriodSelector currentPeriod={period} onChange={setPeriod} />
+          </CardContent>
+        </Card>
+
+        {/* Table Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Performance (Last 20 Days)</CardTitle>
+            <CardDescription>Daily breakdown for selected period</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-96 w-full rounded-lg" />
+            ) : tableData.length === 0 ? (
+              <div className="flex h-96 items-center justify-center text-muted-foreground">
+                No data for selected period
+              </div>
+            ) : (
+              <div className="w-full">
+                <HistoryTable data={tableData} />
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
-
-      {/* Summary Cards */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[...Array(3)].map((_, i) => (
-            <Card key={i}>
-              <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
-              <CardContent><Skeleton className="h-10 w-48" /></CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : latest ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Portfolio Value</CardTitle>
-              <DollarSign className="h-5 w-5 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{formatCurrency(latest.total_value)}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                As of {format(parseISO(latest.timestamp), 'MMM d, yyyy')}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Today's Change</CardTitle>
-              {latest.daily_change >= 0 ? (
-                <TrendingUp className="h-5 w-5 text-green-600" />
-              ) : (
-                <TrendingDown className="h-5 w-5 text-red-600" />
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className={`text-3xl font-bold ${latest.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {latest.daily_change >= 0 ? '+' : ''}{formatCurrency(latest.daily_change)}
-              </div>
-              <p className={`text-xs ${latest.daily_percent >= 0 ? 'text-green-600' : 'text-red-600'} mt-1`}>
-                {latest.daily_percent >= 0 ? '+' : ''}{formatPercent(latest.daily_percent)}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">All-Time Return</CardTitle>
-              <TrendingUp className="h-5 w-5 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className={`text-3xl font-bold ${latest.all_time_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {latest.all_time_percent >= 0 ? '+' : ''}{formatPercent(latest.all_time_percent)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Total gain: {formatCurrency(latest.all_time_gain)}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {/* Chart */}
-      <Card className="col-span-full">
-        <CardHeader>
-          <CardTitle>Portfolio Value Over Time</CardTitle>
-          <CardDescription>Daily end-of-day snapshots (one point per trading day)</CardDescription>
-        </CardHeader>
-        <CardContent className="h-96">
-          {isLoading ? (
-            <Skeleton className="h-full w-full rounded-lg" />
-          ) : isError ? (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              Error loading history data
-            </div>
-          ) : history.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-              <Calendar className="h-16 w-16 mb-4 opacity-50" />
-              <p className="text-lg">No daily history yet</p>
-              <p className="text-sm mt-2">Data will appear after the first end-of-day snapshot</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={history} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="timestamp"
-                  tickFormatter={(value) => format(parseISO(value), 'MMM d')}
-                />
-                <YAxis tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area
-                  type="monotone"
-                  dataKey="total_value"
-                  stroke="#3b82f6"
-                  fillOpacity={1}
-                  fill="url(#colorValue)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

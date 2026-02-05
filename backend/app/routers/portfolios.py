@@ -140,6 +140,72 @@ def get_daily_global_history(db: Session = Depends(get_db)):
         .all()
     )
 
+@router.get("/summary", response_model=List[PortfolioSummary])
+def get_portfolios_summary(db: Session = Depends(get_db)):
+    """
+    Returns enriched summary for every portfolio (total value in CAD, performance, pie data).
+    Uses cached USDCAD rate from Redis.
+    """
+    portfolios = db.query(Portfolio).all()
+    holdings = db.query(Holding).all()
+
+    rate_str = r.get("fx:USDCAD")
+    rate = float(rate_str.decode("utf-8") if rate_str else 1.37)
+
+    port_holdings = defaultdict(list)
+    for h in holdings:
+        port_holdings[h.portfolio_id].append(h)
+
+    summaries = []
+    for port in portfolios:
+        ph = port_holdings.get(port.id, [])
+
+        total_value = 0.0
+        daily_change = 0.0
+        gain_loss = 0.0
+        pie_data = []
+
+        for h in ph:
+            is_cad = h.symbol.upper().endswith('.TO')
+            native_market = h.market_value or (h.current_price or 0) * h.quantity
+            native_daily = (h.daily_change or 0) * h.quantity
+            native_gain = h.all_time_gain_loss or ((h.current_price or 0) - h.purchase_price) * h.quantity
+
+            contrib_market = native_market if is_cad else native_market * rate
+            contrib_daily = native_daily if is_cad else native_daily * rate
+            contrib_gain = native_gain if is_cad else native_gain * rate
+
+            total_value += contrib_market
+            daily_change += contrib_daily
+            gain_loss += contrib_gain
+
+            if contrib_market > 0:
+                pie_data.append(PieItem(name=h.symbol, value=round(contrib_market, 2)))
+
+        yesterday_value = total_value - daily_change
+        daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0.0
+
+        cost_basis = total_value - gain_loss
+        all_time_percent = (gain_loss / cost_basis * 100) if cost_basis > 0 else 0.0
+
+        pie_data = sorted(pie_data, key=lambda x: x.value, reverse=True)
+
+        summaries.append(
+            PortfolioSummary(
+                id=port.id,
+                name=port.name,
+                isDefault=port.is_default,
+                totalValue=round(total_value, 2),
+                gainLoss=round(gain_loss, 2),
+                dailyChange=round(daily_change, 2),
+                dailyPercent=round(daily_percent, 2),
+                allTimePercent=round(all_time_percent, 2),
+                pieData=pie_data,
+            )
+        )
+
+    return summaries
+    
 @router.get("/summaries", response_model=List[PortfolioSummary])
 def get_portfolios_summaries(db: Session = Depends(get_db)):
     portfolios = (

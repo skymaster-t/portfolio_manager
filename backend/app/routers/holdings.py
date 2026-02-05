@@ -1,4 +1,3 @@
-# backend/app/routers/holdings.py (full file – fixed NameError by importing Currency)
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
@@ -15,7 +14,7 @@ router = APIRouter(prefix="/holdings", tags=["holdings"])
 STALE_THRESHOLD = timedelta(minutes=10)
 
 def detect_currency(symbol: str) -> Currency:
-    """Detect currency from symbol – .TO suffix = CAD, else USD"""
+    """Detect currency from symbol - .TO suffix = CAD, else USD"""
     return Currency.CAD if symbol.upper().endswith('.TO') else Currency.USD
 
 def update_holding_prices(db: Session, holdings: List[Holding], price_map: Dict[str, dict], now: datetime) -> int:
@@ -192,3 +191,43 @@ def delete_holding(holding_id: int, db: Session = Depends(get_db)):
     db.delete(holding)
     db.commit()
     return None
+
+@router.get("/", response_model=List[HoldingResponse])
+def get_all_holdings(db: Session = Depends(get_db)):
+    """
+    Production endpoint: Return all holdings with fresh underlying details.
+    Updates main holding prices in DB only if stale (>10 min).
+    """
+    holdings = db.query(Holding).options(joinedload(Holding.underlyings)).all()
+    if not holdings:
+        return []
+
+    # Collect all unique symbols
+    symbols = set()
+    for h in holdings:
+        symbols.add(h.symbol)
+        if h.type == HoldingType.etf:
+            for u in h.underlyings:
+                symbols.add(u.symbol)
+
+    price_map = batch_fetch_prices(list(symbols))
+
+    now = datetime.utcnow()
+    updated = 0
+    for h in holdings:
+        data = price_map.get(h.symbol, {})
+        price = data.get("price")
+        if price is not None and (h.last_price_update is None or (now - h.last_price_update) > STALE_THRESHOLD):
+            h.current_price = price
+            h.daily_change = data.get("change")
+            h.daily_change_percent = data.get("change_percent")
+            recalc_derived(h)
+            h.last_price_update = now
+            updated += 1
+
+        enrich_underlyings(h, price_map)
+
+    if updated > 0:
+        db.commit()
+
+    return holdings

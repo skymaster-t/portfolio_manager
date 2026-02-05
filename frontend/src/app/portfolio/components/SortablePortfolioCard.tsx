@@ -91,35 +91,43 @@ const renderCustomizedLabel = (props: any) => {
   if (!total || value <= 0) return null;
 
   const RADIAN = Math.PI / 180;
-  const radius = outerRadius + 40;
+  // Closer to the pie slices (original was +40, now much tighter)
+  const radius = outerRadius + 25;
+
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
   const percent = ((value / total) * 100).toFixed(1);
+  const labelText = `${name} ${percent}%`;
 
-  const textLength = (name.length + percent.length + 2) * 7;
-  const padding = 10;
+  // Approximate width for smaller font
+  const textLength = labelText.length * 7.2;
+  const padding = 8;
 
   return (
     <g>
+      {/* Dark grey rounded background box */}
       <rect
         x={x - textLength / 2 - padding}
-        y={y - 14}
-        width={textLength + padding * 2}
-        height={28}
-        rx={8}
-        fill="#374151"
-        opacity={0.95}
+        y={y - 10}
+        width={textLength + 2 * padding}
+        height={20}
+        fill="#334155" // slate-700 dark grey
+        rx="8"
+        ry="8"
       />
+
+      {/* Single-line white text – smaller and centered */}
       <text
         x={x}
         y={y}
-        fill="#ffffff"
+        fill="white"
         textAnchor="middle"
         dominantBaseline="central"
-        className="text-xs font-medium"
+        fontSize={11}
+        fontWeight="500"
       >
-        {name} {percent}%
+        {labelText}
       </text>
     </g>
   );
@@ -160,8 +168,8 @@ export function SortablePortfolioCard({
 
   const displayValue = (cadValue: number) => displayCurrency === 'CAD' ? cadValue : cadValue / exchangeRate;
 
-  const truncatedName = portfolio.name.length > 20
-    ? `${portfolio.name.slice(0, 20)}...`
+  const truncatedName = portfolio.name.length > 16
+    ? `${portfolio.name.slice(0, 16)}...`
     : portfolio.name;
 
   const fullLegendEntries = portfolio.pieData;
@@ -183,47 +191,49 @@ export function SortablePortfolioCard({
     <Card
       ref={setNodeRef}
       style={style}
-      className={`cursor-pointer transition-all hover:shadow-xl overflow-hidden relative ${
-        isSelected ? 'ring-4 ring-indigo-500' : ''
-      }`}
-      onClick={onSelect}
+      className={`transition-all hover:shadow-xl overflow-hidden relative`}      
     >
-      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-t-lg h-24 flex flex-col justify-center px-6 -mt-6">
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-4">
-            <div {...attributes} {...listeners} className="cursor-grab touch-none">
-              <GripVertical className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <h3 className="text-2xl font-bold text-gray-800 leading-tight">
-              {truncatedName}
-            </h3>
+      <div className="flex items-center justify-between p-6 pb-4 bg-gradient-to-br from-indigo-50 to-purple-50 border-0 shadow-lg">
+        {/* Left side: grip + title + badge */}
+        <div className="flex items-center gap-4">
+          <div
+            {...attributes}
+            {...listeners}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground cursor-grab active:cursor-grabbing transition-colors"
+          >
+            <GripVertical className="h-5 w-5" />
           </div>
-          <div className="flex gap-2">
-            {/* Edit button – stronger indigo hover highlight */}
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={(e) => { e.stopPropagation(); onEdit(); }}
-              className="hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
-            >
-              <Edit className="h-5 w-5" />
-            </Button>
-            {/* Delete button – stronger red hover highlight */}
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="hover:bg-red-100 hover:text-red-700 transition-colors"
-            >
-              <Trash2 className="h-5 w-5" />
-            </Button>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-2xl font-semibold truncate">{truncatedName}</h3>
+            {portfolio.isDefault && <Badge variant="secondary">Default</Badge>}
           </div>
         </div>
 
-        <div className="mt-2 flex justify-center">
-          <Badge className={!portfolio.isDefault ? 'opacity-0 pointer-events-none' : ''}>
-            Default
-          </Badge>
+        {/* Right side: edit + delete buttons (unchanged except explicit h-10 w-10 for safety) */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+            className="h-10 w-10"
+          >
+            <Edit className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="h-10 w-10"
+          >
+            <Trash2 className="h-5 w-5" />
+          </Button>
         </div>
       </div>
 

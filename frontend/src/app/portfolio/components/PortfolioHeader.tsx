@@ -1,4 +1,3 @@
-// src/app/holdings/components/PortfolioHeader.tsx (updated: "Add Holding" now purple/indigo, "Add Portfolio" now white with indigo icon)
 'use client';
 
 import { PlusCircle } from 'lucide-react';
