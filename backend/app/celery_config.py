@@ -1,3 +1,4 @@
+# backend/app/celery_config.py (updated: EOD snapshot now runs at 4:30 PM ET)
 from celery import Celery
 from celery.schedules import crontab
 from dotenv import load_dotenv
@@ -26,34 +27,32 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
 )
 
-# Auto-discover tasks in app.tasks package
 celery_app.autodiscover_tasks(['app.tasks'])
 
-# Explicit imports to ensure task registration (prevents "unregistered task" errors)
 try:
     from app.tasks.update_prices import update_all_prices  # noqa: F401
     from app.tasks.portfolio_history_task import save_portfolio_history_snapshot  # noqa: F401
+    from app.tasks.portfolio_history_task import save_daily_global_snapshot  # noqa: F401
 except ImportError as e:
     import logging
     logging.warning(f"Could not import tasks: {e}")
 
-# Combined beat schedule (single dict – prevents overwriting)
 celery_app.conf.beat_schedule = {
     "update-stock-prices-every-5-min": {
         "task": "app.tasks.update_prices.update_all_prices",
-        "schedule": 300.0,  # 5 minutes
+        "schedule": 300.0,  # every 5 minutes
     },
     "portfolio-history-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_portfolio_history_snapshot",
-        "schedule": 300.0,  # every 5 minutes
+        "schedule": 300.0,  # every 5 minutes (restricted internally to 8AM-9PM on trading days)
     },
-    # Daily EOD global snapshot – 18:30 ET on trading days (Mon–Fri, skips holidays inside task)
     "daily-eod-global-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_daily_global_snapshot",
         "schedule": crontab(
-            hour=18,
-            minute=30,
-            day_of_week='mon-fri',  # Runs Mon–Fri at 18:30 ET (Toronto time)
+            hour=16,      # 4:00 PM ET
+            minute=30,    # 4:30 PM ET – 30 minutes after market close
+            day_of_week='mon-fri',
         ),
-    },    
+        # Note: Task itself also checks _was_trading_day() to skip holidays
+    },
 }

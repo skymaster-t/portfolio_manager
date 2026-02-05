@@ -1,20 +1,20 @@
+# backend/app/tasks/portfolio_history_task.py (updated: intraday snapshots restricted to 8AM-9PM on trading days, price updating removed – relies on update_prices task, consistent CAD conversion in both intraday & EOD, EOD at 4:30 PM)
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import Holding, Portfolio, PortfolioHistory, GlobalHistory
 from app.utils.yahoo import batch_fetch_prices
 from app.celery_config import celery_app
-from datetime import datetime
 from app.main import r
 import logging
 import pytz
 import holidays
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 celery = celery_app
 
-# Helper – was today a trading day?
 def _was_trading_day() -> bool:
     tz = pytz.timezone("America/Toronto")
     today = datetime.now(tz).date()
@@ -26,70 +26,62 @@ def _was_trading_day() -> bool:
         return False
     return True
 
+def _in_update_window() -> bool:
+    """8:00 AM – 9:00 PM Toronto time"""
+    tz = pytz.timezone("America/Toronto")
+    now = datetime.now(tz)
+    return 8 <= now.hour < 21
+
 @celery.task(name="app.tasks.portfolio_history_task.save_portfolio_history_snapshot")
 def save_portfolio_history_snapshot():
+    if not _was_trading_day():
+        logger.info("Skipping intraday snapshot – non-trading day")
+        return "skipped - non-trading day"
+
+    if not _in_update_window():
+        logger.info("Skipping intraday snapshot – outside 8AM-9PM window")
+        return "skipped - outside window"
+
     db: Session = SessionLocal()
     try:
         holdings = db.query(Holding).all()
+        if not holdings:
+            return "no holdings"
 
-        # Fetch latest prices (same as update_prices task)
-        symbols = [h.symbol for h in holdings] + ["USDCAD=X"]
-        price_map = batch_fetch_prices(symbols)
+        portfolios = db.query(Portfolio).all()
 
-        now = datetime.utcnow()
-
-        # Update holdings with latest prices (same as update_prices)
-        for h in holdings:
-            data = price_map.get(h.symbol, {})
-            price = data.get("price")
-            if price is not None:
-                h.current_price = price
-                h.daily_change = data.get("change")
-                h.daily_change_percent = data.get("change_percent")
-                h.market_value = price * h.quantity
-                h.all_time_gain_loss = (price - h.purchase_price) * h.quantity
-                h.all_time_change_percent = (
-                    (price - h.purchase_price) / h.purchase_price * 100
-                    if h.purchase_price != 0 else None
-                )
-                h.last_price_update = now
-
-        db.commit()
-
-        # Get USDCAD rate (1 USD = X CAD) – prefer cached, fallback from price_map
+        # Get latest FX rate (cached primary, fallback fetch only FX)
         rate_str = r.get("fx:USDCAD")
         if rate_str:
             rate = float(rate_str.decode("utf-8"))
         else:
-            usdcad_data = price_map.get("USDCAD=X", {})
-            rate = usdcad_data.get("price") or 1.37
+            fx_map = batch_fetch_prices(["USDCAD=X"])
+            rate = fx_map.get("USDCAD=X", {}).get("price") or 1.37
+            r.set("fx:USDCAD", rate, ex=3600)
 
-        portfolios = db.query(Portfolio).all()
+        now = datetime.utcnow()
 
-        # Compute and save per-portfolio history (existing logic – kept unchanged)
+        # Per-portfolio snapshots
         for port in portfolios:
             port_holdings = [h for h in holdings if h.portfolio_id == port.id]
-            total_value = 0.0
-            daily_change = 0.0
-            gain_loss = 0.0
+            total_value = daily_change = gain_loss = 0.0
 
             for h in port_holdings:
                 is_cad = h.symbol.upper().endswith('.TO')
-                contrib_market = h.market_value if is_cad else (h.market_value or 0) * rate
-                contrib_daily = (h.daily_change or 0) * h.quantity if is_cad else ((h.daily_change or 0) * h.quantity) * rate
-                contrib_gain = h.all_time_gain_loss or 0 if is_cad else (h.all_time_gain_loss or 0) * rate
+                mv = h.market_value or 0
+                dc = (h.daily_change or 0) * h.quantity
+                ag = h.all_time_gain_loss or 0
 
-                total_value += contrib_market
-                daily_change += contrib_daily
-                gain_loss += contrib_gain
+                total_value += mv if is_cad else mv * rate
+                daily_change += dc if is_cad else dc * rate
+                gain_loss += ag if is_cad else ag * rate
 
             yesterday_value = total_value - daily_change
-            daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0.0
-
+            daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0
             cost_basis = total_value - gain_loss
-            all_time_percent = (gain_loss / cost_basis * 100) if cost_basis > 0 else 0.0
+            all_time_percent = (gain_loss / cost_basis * 100) if cost_basis > 0 else 0
 
-            history = PortfolioHistory(
+            history_record = PortfolioHistory(
                 portfolio_id=port.id,
                 timestamp=now,
                 total_value=total_value,
@@ -98,37 +90,33 @@ def save_portfolio_history_snapshot():
                 all_time_gain=gain_loss,
                 all_time_percent=all_time_percent,
             )
-            db.add(history)
+            db.add(history_record)
 
-        # NEW: Compute and save GLOBAL history (in CAD) every 5 minutes – matches header total
-        global_total = 0.0
-        global_daily = 0.0
-        global_gain = 0.0
-
+        # Global snapshot (intraday, not marked as EOD)
+        total_value = daily_change = all_time_gain = 0.0
         for h in holdings:
             is_cad = h.symbol.upper().endswith('.TO')
-            contrib_market = h.market_value if is_cad else (h.market_value or 0) * rate
-            contrib_daily = (h.daily_change or 0) * h.quantity if is_cad else ((h.daily_change or 0) * h.quantity) * rate
-            contrib_gain = h.all_time_gain_loss or 0 if is_cad else (h.all_time_gain_loss or 0) * rate
+            mv = h.market_value or 0
+            dc = (h.daily_change or 0) * h.quantity
+            ag = h.all_time_gain_loss or 0
 
-            global_total += contrib_market
-            global_daily += contrib_daily
-            global_gain += contrib_gain
+            total_value += mv if is_cad else mv * rate
+            daily_change += dc if is_cad else dc * rate
+            all_time_gain += ag if is_cad else ag * rate
 
-        global_yesterday = global_total - global_daily
-        global_daily_percent = (global_daily / global_yesterday * 100) if global_yesterday > 0 else 0.0
-
-        global_cost = global_total - global_gain
-        global_all_time_percent = (global_gain / global_cost * 100) if global_cost > 0 else 0.0
+        yesterday_value = total_value - daily_change
+        daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0
+        cost_basis = total_value - all_time_gain
+        all_time_percent = (all_time_gain / cost_basis * 100) if cost_basis > 0 else 0
 
         global_history = GlobalHistory(
             timestamp=now,
-            total_value=global_total,
-            daily_change=global_daily,
-            daily_percent=global_daily_percent,
-            all_time_gain=global_gain,
-            all_time_percent=global_all_time_percent,
-            is_eod=False,  # Intraday snapshot
+            total_value=total_value,
+            daily_change=daily_change,
+            daily_percent=daily_percent,
+            all_time_gain=all_time_gain,
+            all_time_percent=all_time_percent,
+            is_eod=False,
         )
         db.add(global_history)
 
@@ -144,7 +132,6 @@ def save_portfolio_history_snapshot():
     finally:
         db.close()
 
-# Daily end-of-day global snapshot (runs ~2 hours after close)
 @celery.task(name="app.tasks.portfolio_history_task.save_daily_global_snapshot")
 def save_daily_global_snapshot():
     if not _was_trading_day():
@@ -158,9 +145,6 @@ def save_daily_global_snapshot():
             logger.info("No holdings - skipping EOD snapshot")
             return "no holdings"
 
-        symbols = list({h.symbol for h in holdings})
-        price_map = batch_fetch_prices(symbols)
-
         now = datetime.utcnow()
         today = now.date()
 
@@ -173,27 +157,26 @@ def save_daily_global_snapshot():
             logger.info("EOD snapshot already exists for today")
             return "already exists"
 
-        # Update holdings with closing prices (consistent with intraday task)
-        for h in holdings:
-            data = price_map.get(h.symbol, {})
-            price = data.get("price")
-            if price is not None:
-                h.current_price = price
-                h.daily_change = data.get("change")
-                h.daily_change_percent = data.get("change_percent")
-                h.market_value = price * h.quantity
-                h.all_time_gain_loss = (price - h.purchase_price) * h.quantity
-                h.all_time_change_percent = (
-                    (price - h.purchase_price) / h.purchase_price * 100
-                    if h.purchase_price != 0 else None
-                )
-                h.last_price_update = now
-        db.commit()
+        # Get latest FX rate (cached primary, fallback fetch)
+        rate_str = r.get("fx:USDCAD")
+        if rate_str:
+            rate = float(rate_str.decode("utf-8"))
+        else:
+            fx_map = batch_fetch_prices(["USDCAD=X"])
+            rate = fx_map.get("USDCAD=X", {}).get("price") or 1.37
+            r.set("fx:USDCAD", rate, ex=3600)
 
-        # Compute global aggregates (correct quantity multiplication)
-        total_value = sum((h.market_value or 0) for h in holdings)
-        daily_change = sum((h.daily_change or 0) * h.quantity for h in holdings)
-        all_time_gain = sum((h.all_time_gain_loss or 0) for h in holdings)
+        # Compute global aggregates in CAD
+        total_value = daily_change = all_time_gain = 0.0
+        for h in holdings:
+            is_cad = h.symbol.upper().endswith('.TO')
+            mv = h.market_value or 0
+            dc = (h.daily_change or 0) * h.quantity
+            ag = h.all_time_gain_loss or 0
+
+            total_value += mv if is_cad else mv * rate
+            daily_change += dc if is_cad else dc * rate
+            all_time_gain += ag if is_cad else ag * rate
 
         yesterday_value = total_value - daily_change
         daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0
@@ -213,11 +196,11 @@ def save_daily_global_snapshot():
         db.add(eod_record)
         db.commit()
 
-        logger.info(f"EOD global snapshot saved for {today}")
+        logger.info(f"EOD global snapshot saved for {today} at 4:30 PM ET")
         return "success"
     except Exception as e:
         db.rollback()
-        logger.error(f"Error saving daily EOD snapshot: {e}")
+        logger.error(f"Error saving daily EOD snapshot: {e}", exc_info=True)
         raise
     finally:
         db.close()

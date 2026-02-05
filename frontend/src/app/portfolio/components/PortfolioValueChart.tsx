@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' line always starts at 08:00 with carried-forward value, ends at last real snapshot – no future extension)
+// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' X-axis shortened to 08:00 AM – 5:00 PM Toronto time)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -70,7 +70,7 @@ export function PortfolioValueChart() {
       );
     }
 
-    // Fixed window for 'day': 08:00 – 21:00 Toronto time
+    // Fixed window for 'day': 08:00 AM – 5:00 PM Toronto time
     let startMs: number | undefined = undefined;
     let endMs: number | undefined = undefined;
     let ticks: number[] | undefined = undefined;
@@ -84,16 +84,16 @@ export function PortfolioValueChart() {
       const midnightMs = new Date(year, month, day, 0, 0, 0, 0).getTime();
       const hourMs = 60 * 60 * 1000;
 
-      startMs = midnightMs + 8 * hourMs;   // 08:00
-      endMs = midnightMs + 21 * hourMs;   // 21:00
+      startMs = midnightMs + 9 * hourMs;   // 08:00
+      endMs = midnightMs + 17 * hourMs;    // 17:00 (5:00 PM)
 
-      // Hourly ticks 08:00 – 21:00
+      // Hourly ticks 08:00 – 17:00
       ticks = [];
-      for (let h = 8; h <= 21; h++) {
+      for (let h = 8; h <= 17; h++) {
         ticks.push(midnightMs + h * hourMs);
       }
 
-      // Clip to window
+      // Clip data to the 08:00–17:00 window
       filtered = filtered.filter((p) => {
         const t = p.utcDate.getTime();
         return t >= startMs! && t <= endMs!;
@@ -116,9 +116,9 @@ export function PortfolioValueChart() {
       }),
     }));
 
-    // For 'day' period: add carried-forward point at 08:00 if first real point is later
+    // For 'day' period: add carried-forward point at exactly 08:00 if first real point is later
     let data = realData;
-    if (isDayPeriod) {
+    if (isDayPeriod && realData.length > 0) {
       const firstTime = realData[0].time;
       if (firstTime > startMs!) {
         const carriedTooltip = new Date(startMs!).toLocaleString('en-CA', {
