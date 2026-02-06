@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (updated: intraday '1D' X-axis shortened to 08:00 AM – 5:00 PM Toronto time)
+// src/app/holdings/components/PortfolioValueChart.tsx (updated: fallback to last 3 historical snapshots if no intraday data in 08:00–17:00 window)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -46,7 +46,7 @@ export function PortfolioValueChart() {
   });
 
   const chartData = useMemo(() => {
-    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined };
+    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
 
     // Parse UTC timestamps and sort chronologically (oldest → newest)
     const parsed = history
@@ -62,20 +62,22 @@ export function PortfolioValueChart() {
     const isDayPeriod = period === 'day';
 
     // Filter for today (Toronto local date)
-    let filtered = parsed;
+    let todayFiltered = parsed;
     if (isDayPeriod) {
       const todayToronto = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
-      filtered = parsed.filter(
+      todayFiltered = parsed.filter(
         (p) => p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayToronto
       );
     }
 
-    // Fixed window for 'day': 08:00 AM – 5:00 PM Toronto time
-    let startMs: number | undefined = undefined;
-    let endMs: number | undefined = undefined;
+    let data: any[] = [];
+    let useTimeAxis = false;
+    let xDomain: [number, number] | undefined = undefined;
     let ticks: number[] | undefined = undefined;
+    let isFallback = false;
 
     if (isDayPeriod) {
+      // Fixed intraday window: 08:00 AM – 5:00 PM Toronto time
       const today = new Date();
       const year = today.getFullYear();
       const month = today.getMonth();
@@ -84,8 +86,10 @@ export function PortfolioValueChart() {
       const midnightMs = new Date(year, month, day, 0, 0, 0, 0).getTime();
       const hourMs = 60 * 60 * 1000;
 
-      startMs = midnightMs + 9 * hourMs;   // 08:00
-      endMs = midnightMs + 17 * hourMs;    // 17:00 (5:00 PM)
+      const startMs = midnightMs + 8 * hourMs;   // 08:00
+      const endMs = midnightMs + 17 * hourMs;   // 17:00
+
+      xDomain = [startMs, endMs];
 
       // Hourly ticks 08:00 – 17:00
       ticks = [];
@@ -93,58 +97,110 @@ export function PortfolioValueChart() {
         ticks.push(midnightMs + h * hourMs);
       }
 
-      // Clip data to the 08:00–17:00 window
-      filtered = filtered.filter((p) => {
+      // Clip to window
+      const clipped = todayFiltered.filter((p) => {
         const t = p.utcDate.getTime();
-        return t >= startMs! && t <= endMs!;
+        return t >= startMs && t <= endMs;
       });
-    }
 
-    if (filtered.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined };
+      if (clipped.length > 0) {
+        // Normal intraday mode
+        useTimeAxis = true;
 
-    // Build real data points
-    const realData = filtered.map((p) => ({
-      time: p.utcDate.getTime(),
-      value: p.value,
-      tooltipLabel: p.utcDate.toLocaleString('en-CA', {
-        timeZone: TORONTO_TZ,
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      }),
-    }));
+        const realData = clipped.map((p) => ({
+          time: p.utcDate.getTime(),
+          value: p.value,
+          tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+        }));
 
-    // For 'day' period: add carried-forward point at exactly 08:00 if first real point is later
-    let data = realData;
-    if (isDayPeriod && realData.length > 0) {
-      const firstTime = realData[0].time;
-      if (firstTime > startMs!) {
-        const carriedTooltip = new Date(startMs!).toLocaleString('en-CA', {
+        // Add carried-forward point at 08:00 if first real point is later
+        data = realData;
+        const firstTime = realData[0].time;
+        if (firstTime > startMs) {
+          const carriedTooltip = new Date(startMs).toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }) + ' (carried forward)';
+
+          data = [
+            {
+              time: startMs,
+              value: realData[0].value,
+              tooltipLabel: carriedTooltip,
+            },
+            ...realData,
+          ];
+        }
+      } else {
+        // Fallback: no intraday data in window → show last 3 historical snapshots
+        isFallback = true;
+        const fallbackPoints = parsed.slice(-3);
+
+        if (fallbackPoints.length === 0) {
+          return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
+        }
+
+        data = fallbackPoints.map((p) => ({
+          label: p.utcDate.toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+          value: p.value,
+          tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+            timeZone: TORONTO_TZ,
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+        }));
+
+        // No time axis, no domain/ticks for fallback
+        useTimeAxis = false;
+        xDomain = undefined;
+        ticks = undefined;
+      }
+    } else {
+      // Non-'day' periods: use full history with categorical date labels
+      data = parsed.map((p) => ({
+        label: p.utcDate.toLocaleDateString('en-CA', {
           timeZone: TORONTO_TZ,
           month: 'short',
           day: 'numeric',
+        }),
+        value: p.value,
+        tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+          timeZone: TORONTO_TZ,
           year: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        }) + ' (carried forward)';
-
-        data = [
-          {
-            time: startMs!,
-            value: realData[0].value,
-            tooltipLabel: carriedTooltip,
-          },
-          ...realData,
-        ];
-      }
+          month: 'short',
+          day: 'numeric',
+        }),
+      }));
     }
 
-    // Y-axis ±10% padding (using real values only)
-    const realValues = filtered.map((p) => p.value);
-    const dataMin = Math.min(...realValues);
-    const dataMax = Math.max(...realValues);
+    // Y-axis ±10% padding (use the values that will actually be plotted)
+    const plotValues = data.length > 0 ? data.map((d: any) => 'value' in d ? d.value : d.value) : [];
+    if (plotValues.length === 0) {
+      return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
+    }
+
+    const dataMin = Math.min(...plotValues);
+    const dataMax = Math.max(...plotValues);
 
     let yLower = dataMin;
     let yUpper = dataMax;
@@ -161,14 +217,13 @@ export function PortfolioValueChart() {
 
     const yDomain: [number, number] = [yLower, yUpper];
 
-    const xDomain = isDayPeriod ? [startMs!, endMs!] : undefined;
-
     return {
       data,
-      useTimeAxis: isDayPeriod,
+      useTimeAxis,
       xDomain,
       yDomain,
       ticks,
+      isFallback,
     };
   }, [history, period]);
 
@@ -195,6 +250,12 @@ export function PortfolioValueChart() {
   return (
     <Card>
       <CardContent className="pt-6">
+        {chartData.isFallback && (
+          <p className="text-center text-muted-foreground mb-4">
+            No intraday data available today. Showing the most recent 3 historical snapshots.
+          </p>
+        )}
+
         <ResponsiveContainer width="100%" height={400}>
           <LineChart data={chartData.data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
