@@ -20,9 +20,9 @@ const fetchPortfolioSummaries = () => axios.get(`${API_BASE}/portfolios/summary`
 
 // Common options for 5-minute background refresh
 const commonOptions = {
-  refetchInterval: 300000, // 5 minutes
+  refetchInterval: 60000, // 60 seconds
   refetchIntervalInBackground: true,
-  staleTime: 300000, // Consider fresh for 5 minutes
+  staleTime: 60000, //  60 seconds
 } as const;
 
 // Shared hooks – use these in any page/component

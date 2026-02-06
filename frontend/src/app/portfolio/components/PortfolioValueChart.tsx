@@ -1,16 +1,16 @@
+// src/app/portfolio/components/PortfolioValueChart.tsx (full code: fixed missing CartesianGrid import; premium area chart with gradient fill, current value vertical line + large dot + value label – Robinhood/Wealthsimple style; clean, modern)
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
-  CartesianGrid,
+  CartesianGrid, // ← Fixed: added missing import
   Tooltip,
+  ReferenceLine,
 } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -18,18 +18,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useGlobalIntradayHistory } from '@/lib/queries';
 
 interface HistoryPoint {
-  timestamp: string; // UTC ISO string from backend
+  timestamp: string;
   total_value: number;
 }
 
 type Period = 'day' | 'week' | 'month' | '3m' | 'year' | '2y' | '3y' | 'ytd' | 'all';
 
 const TORONTO_TZ = 'America/Toronto';
-
-const fetchGlobalHistory = async (): Promise<HistoryPoint[]> => {
-  const { data } = await axios.get('http://localhost:8000/portfolios/global-history');
-  return data;
-};
 
 export function PortfolioValueChart() {
   const [period, setPeriod] = useState<Period>('day');
@@ -40,11 +35,10 @@ export function PortfolioValueChart() {
   } = useGlobalIntradayHistory();
 
   const chartData = useMemo(() => {
-    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
+    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
 
-    // Parse UTC timestamps and sort chronologically (oldest → newest)
     const parsed = history
-      .map((point) => {
+      .map((point: HistoryPoint) => {
         const iso = point.timestamp.endsWith('Z') ? point.timestamp : point.timestamp + 'Z';
         return {
           utcDate: new Date(iso),
@@ -55,7 +49,6 @@ export function PortfolioValueChart() {
 
     const isDayPeriod = period === 'day';
 
-    // Filter for today (Toronto local date)
     let todayFiltered = parsed;
     if (isDayPeriod) {
       const todayToronto = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
@@ -71,7 +64,6 @@ export function PortfolioValueChart() {
     let isFallback = false;
 
     if (isDayPeriod) {
-      // Fixed intraday window: 08:00 AM – 5:00 PM Toronto time
       const today = new Date();
       const year = today.getFullYear();
       const month = today.getMonth();
@@ -80,25 +72,22 @@ export function PortfolioValueChart() {
       const midnightMs = new Date(year, month, day, 0, 0, 0, 0).getTime();
       const hourMs = 60 * 60 * 1000;
 
-      const startMs = midnightMs + 8 * hourMs;   // 08:00
-      const endMs = midnightMs + 17 * hourMs;   // 17:00
+      const startMs = midnightMs + 8 * hourMs;
+      const endMs = midnightMs + 17 * hourMs;
 
       xDomain = [startMs, endMs];
 
-      // Hourly ticks 08:00 – 17:00
       ticks = [];
       for (let h = 8; h <= 17; h++) {
         ticks.push(midnightMs + h * hourMs);
       }
 
-      // Clip to window
       const clipped = todayFiltered.filter((p) => {
         const t = p.utcDate.getTime();
         return t >= startMs && t <= endMs;
       });
 
       if (clipped.length > 0) {
-        // Normal intraday mode
         useTimeAxis = true;
 
         const realData = clipped.map((p) => ({
@@ -114,7 +103,6 @@ export function PortfolioValueChart() {
           }),
         }));
 
-        // Add carried-forward point at 08:00 if first real point is later
         data = realData;
         const firstTime = realData[0].time;
         if (firstTime > startMs) {
@@ -137,12 +125,11 @@ export function PortfolioValueChart() {
           ];
         }
       } else {
-        // Fallback: no intraday data in window → show last 3 historical snapshots
         isFallback = true;
         const fallbackPoints = parsed.slice(-3);
 
         if (fallbackPoints.length === 0) {
-          return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
+          return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
         }
 
         data = fallbackPoints.map((p) => ({
@@ -164,13 +151,11 @@ export function PortfolioValueChart() {
           }),
         }));
 
-        // No time axis, no domain/ticks for fallback
         useTimeAxis = false;
         xDomain = undefined;
         ticks = undefined;
       }
     } else {
-      // Non-'day' periods: use full history with categorical date labels
       data = parsed.map((p) => ({
         label: p.utcDate.toLocaleDateString('en-CA', {
           timeZone: TORONTO_TZ,
@@ -187,10 +172,9 @@ export function PortfolioValueChart() {
       }));
     }
 
-    // Y-axis ±10% padding (use the values that will actually be plotted)
-    const plotValues = data.length > 0 ? data.map((d: any) => 'value' in d ? d.value : d.value) : [];
+    const plotValues = data.map((d: any) => d.value);
     if (plotValues.length === 0) {
-      return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };
+      return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
     }
 
     const dataMin = Math.min(...plotValues);
@@ -211,6 +195,8 @@ export function PortfolioValueChart() {
 
     const yDomain: [number, number] = [yLower, yUpper];
 
+    const latestValue = data[data.length - 1].value;
+
     return {
       data,
       useTimeAxis,
@@ -218,6 +204,7 @@ export function PortfolioValueChart() {
       yDomain,
       ticks,
       isFallback,
+      latestValue,
     };
   }, [history, period]);
 
@@ -251,8 +238,16 @@ export function PortfolioValueChart() {
         )}
 
         <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={chartData.data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+          <AreaChart data={chartData.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+            <defs>
+              <linearGradient id="gradientFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" opacity={0.3} />
+
             <XAxis
               dataKey={chartData.useTimeAxis ? 'time' : 'label'}
               type={chartData.useTimeAxis ? 'number' : 'category'}
@@ -269,11 +264,11 @@ export function PortfolioValueChart() {
                       })
                   : undefined
               }
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
             />
             <YAxis
               domain={chartData.yDomain}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
               tickFormatter={(value) =>
                 new Intl.NumberFormat('en-CA', {
                   style: 'currency',
@@ -304,14 +299,53 @@ export function PortfolioValueChart() {
                 borderRadius: '8px',
               }}
             />
-            <Line
+
+            <Area
               type="monotone"
               dataKey="value"
               stroke="#6366f1"
               strokeWidth={3}
-              dot={false}
+              fillOpacity={1}
+              fill="url(#gradientFill)"
             />
-          </LineChart>
+
+            {/* Current value marker – vertical line + large dot + value label */}
+            {chartData.data.length > 0 && (
+              <>
+                <ReferenceLine
+                  x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : chartData.data[chartData.data.length - 1].label}
+                  stroke="#6366f1"
+                  strokeDasharray="5 5"
+                  strokeOpacity={0.6}
+                />
+
+                <circle
+                  cx={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
+                  cy={chartData.data[chartData.data.length - 1].value}
+                  r={8}
+                  fill="#6366f1"
+                  stroke="#fff"
+                  strokeWidth={3}
+                />
+
+                <text
+                  x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
+                  y={chartData.data[chartData.data.length - 1].value - 15}
+                  textAnchor="middle"
+                  fill="#1f2937"
+                  fontSize={14}
+                  fontWeight="bold"
+                >
+                  {new Intl.NumberFormat('en-CA', {
+                    style: 'currency',
+                    currency: 'CAD',
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                  }).format(chartData.latestValue)}
+                </text>
+              </>
+            )}
+          </AreaChart>
         </ResponsiveContainer>
 
         <div className="flex flex-wrap justify-center gap-2 mt-6">

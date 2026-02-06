@@ -1,4 +1,4 @@
-# backend/app/celery_config.py (updated: EOD snapshot now runs at 4:30 PM ET)
+# backend/app/celery_config.py (updated: price updates now every 1 minute during allowed window – faster, real-time feel while respecting rate limits & trading hours)
 from celery import Celery
 from celery.schedules import crontab
 from dotenv import load_dotenv
@@ -38,21 +38,20 @@ except ImportError as e:
     logging.warning(f"Could not import tasks: {e}")
 
 celery_app.conf.beat_schedule = {
-    "update-stock-prices-every-5-min": {
+    "update-stock-prices-every-1-min": {
         "task": "app.tasks.update_prices.update_all_prices",
-        "schedule": 300.0,  # every 5 minutes
+        "schedule": 60.0,  # Every 1 minute – faster updates during market hours (guarded internally)
     },
     "portfolio-history-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_portfolio_history_snapshot",
-        "schedule": 300.0,  # every 5 minutes (restricted internally to 8AM-9PM on trading days)
+        "schedule": 300.0,  # Keep at 5 minutes – avoids excessive DB writes while prices update every minute
     },
     "daily-eod-global-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_daily_global_snapshot",
         "schedule": crontab(
-            hour=16,      # 4:00 PM ET
-            minute=30,    # 4:30 PM ET – 30 minutes after market close
+            hour=16,      # 4:30 PM ET
+            minute=30,
             day_of_week='mon-fri',
         ),
-        # Note: Task itself also checks _was_trading_day() to skip holidays
     },
 }
