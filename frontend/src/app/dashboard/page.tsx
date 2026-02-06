@@ -1,4 +1,4 @@
-// src/app/dashboard/page.tsx (updated: uses reusable PortfolioHeader from portfolio page – identical summary with currency toggle top-right & last updated bottom-right; fixed missing CardHeader import for HoldingsTicker card)
+// src/app/dashboard/page.tsx (updated layout: Intraday + Primary Holdings Table side-by-side; Long-Term + Recent Performance side-by-side below – responsive grid, clean hierarchy)
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
@@ -16,7 +16,8 @@ import { HistoryTable } from './components/HistoryTable';
 import { PeriodSelector } from './components/PeriodSelector';
 import { PortfolioValueChart } from '../portfolio/components/PortfolioValueChart';
 import { HoldingsTicker } from './components/HoldingsTicker';
-import { PortfolioHeader } from '../portfolio/components/PortfolioHeader'; // Reused exact header
+import { PortfolioHeader } from '../portfolio/components/PortfolioHeader';
+import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable'; // New reusable table card
 import { useGlobalIntradayHistory, useGlobalDailyHistory, useFxRate } from '@/lib/queries';
 
 interface DailyGlobalHistory {
@@ -33,11 +34,9 @@ type Period = '1W' | '1M' | '3M' | 'YTD' | '1Y' | '2Y' | '3Y' | 'All';
 export default function DashboardPage() {
   const [period, setPeriod] = useState<Period>('1M');
 
-  // Currency toggle – shared with PortfolioHeader
   const [displayCurrency, setDisplayCurrency] = useState<'CAD' | 'USD'>('CAD');
   const { data: exchangeRate = 1.37 } = useFxRate();
 
-  // Live clock + last updated relative time
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 30000);
@@ -120,7 +119,7 @@ export default function DashboardPage() {
 
   return (
     <div className="container mx-auto py-8 space-y-12">
-      {/* Reused PortfolioHeader – exact same as portfolio page */}
+      {/* Portfolio Overview Header */}
       <PortfolioHeader
         totalValue={latest?.total_value || 0}
         gainLoss={latest?.all_time_gain || 0}
@@ -135,12 +134,18 @@ export default function DashboardPage() {
         lastUpdated={lastUpdatedRelative}
       />
 
-      {/* Live Holdings Ticker Card */}
+      {/* Live Holdings Ticker */}
       <Card>
-        <HoldingsTicker />
+        <CardHeader>
+          <CardTitle>Live Holdings Ticker</CardTitle>
+          <CardDescription>Current prices and daily changes</CardDescription>
+        </CardHeader>
+        <CardContent className="py-0">
+          <HoldingsTicker />
+        </CardContent>
       </Card>
 
-      {/* Charts Side-by-Side */}
+      {/* Intraday + Primary Holdings Table side-by-side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <Card>
           <CardHeader>
@@ -152,6 +157,11 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
+        <PrimaryHoldingsTable />
+      </div>
+
+      {/* Long-Term + Recent Performance side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <Card>
           <CardHeader>
             <CardTitle>Long-Term Portfolio Value</CardTitle>
@@ -171,26 +181,25 @@ export default function DashboardPage() {
             <PeriodSelector currentPeriod={period} onChange={setPeriod} />
           </CardContent>
         </Card>
-      </div>
 
-      {/* Recent Performance Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Daily Performance</CardTitle>
-          <CardDescription>Last 20 trading days</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {dailyLoading ? (
-            <Skeleton className="h-96 w-full rounded-lg" />
-          ) : tableData.length === 0 ? (
-            <div className="flex h-96 items-center justify-center text-muted-foreground">
-              No data available
-            </div>
-          ) : (
-            <HistoryTable data={tableData} />
-          )}
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Daily Performance</CardTitle>
+            <CardDescription>Last 20 trading days</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {dailyLoading ? (
+              <Skeleton className="h-96 w-full rounded-lg" />
+            ) : tableData.length === 0 ? (
+              <div className="flex h-96 items-center justify-center text-muted-foreground">
+                No data available
+              </div>
+            ) : (
+              <HistoryTable data={tableData} />
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
