@@ -1,4 +1,3 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (updated: fallback to last 3 historical snapshots if no intraday data in 08:00–17:00 window)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -16,6 +15,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useGlobalIntradayHistory } from '@/lib/queries';
 
 interface HistoryPoint {
   timestamp: string; // UTC ISO string from backend
@@ -37,13 +37,7 @@ export function PortfolioValueChart() {
   const {
     data: history = [],
     isLoading,
-  } = useQuery({
-    queryKey: ['globalHistory'],
-    queryFn: fetchGlobalHistory,
-    refetchInterval: 300000,
-    refetchIntervalInBackground: true,
-    staleTime: 300000,
-  });
+  } = useGlobalIntradayHistory();
 
   const chartData = useMemo(() => {
     if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false };

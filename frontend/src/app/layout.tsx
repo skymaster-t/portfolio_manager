@@ -1,3 +1,4 @@
+import { Inter } from 'next/font/google';
 import './globals.css';
 import Providers from '@/components/Providers';
 import Header from '@/components/Header';
@@ -7,6 +8,8 @@ export const metadata = {
   title: 'Finance App',
   description: 'Personal Portfolio Manager',
 };
+
+const inter = Inter({ subsets: ['latin'] });
 
 export default function RootLayout({
   children,
