@@ -219,7 +219,7 @@ export function SortablePortfolioCard({
               e.stopPropagation();
               onEdit();
             }}
-            className="h-10 w-10"
+            className="h-10 w-10 hover:bg-indigo-600 hover:text-white transition-all duration-200"
           >
             <Edit className="h-5 w-5" />
           </Button>
@@ -230,7 +230,7 @@ export function SortablePortfolioCard({
               e.stopPropagation();
               onDelete();
             }}
-            className="h-10 w-10"
+            className="h-10 w-10 hover:bg-red-600 hover:text-white transition-all duration-200"
           >
             <Trash2 className="h-5 w-5" />
           </Button>
