@@ -101,7 +101,7 @@ export default function PortfolioPage() {
   };
 
   return (
-    <div className="container mx-auto py-8 space-y-12">
+    <div className="container mx-auto space-y-12">
       <PortfolioHeader {...headerProps} />
 
       <PortfolioValueChart />
