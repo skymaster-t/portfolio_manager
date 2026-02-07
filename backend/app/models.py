@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
 import enum
+from sqlalchemy.dialects.postgresql import JSONB
 
 class HoldingType(enum.Enum):
     stock = "stock"
@@ -54,6 +55,8 @@ class Holding(Base):
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
 
     currency = Column(Enum(Currency), nullable=False, server_default=Currency.USD.value)
+
+    day_chart = Column(JSONB, nullable=True, server_default='[]')
 
     portfolio = relationship("Portfolio", back_populates="holdings")
     underlyings = relationship("UnderlyingHolding", back_populates="holding")

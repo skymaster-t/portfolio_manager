@@ -1,4 +1,3 @@
-// src/app/dashboard/components/HoldingsTicker.tsx (updated: hover pause; overall speed reduced 25% (~75 px/s); JS smooth scroll persists position on updates – no reset/jump; tighter spacing, rounded light green/red boxes, gain/loss below)
 'use client';
 
 import { useEffect, useRef, useMemo } from 'react';
@@ -65,8 +64,8 @@ export function HoldingsTicker() {
   // Duplicate for seamless loop
   const duplicatedItems = [...tickerItems, ...tickerItems];
 
-  // Speed reduced 25% from 100 → 75 px/s – brisk but readable
-  const speed = 50;
+  // Speed
+  const speed = 40;
 
   // Animation – persists position, pauses on hover
   useEffect(() => {
@@ -95,11 +94,11 @@ export function HoldingsTicker() {
     return () => {
       if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
     };
-  }, [tickerItems.length]); // Re-run only if number of items changes
+  }, [tickerItems.length]);
 
   if (isLoading || holdings.length === 0) {
     return (
-      <div className="bg-muted py-4 text-center text-muted-foreground">
+      <div className="bg-muted py-2 text-center text-muted-foreground text-xs">
         {isLoading ? 'Loading holdings...' : 'No holdings to display'}
       </div>
     );
@@ -107,12 +106,12 @@ export function HoldingsTicker() {
 
   return (
     <div
-      className="bg-background border-y py-4 overflow-hidden"
+      className="bg-background border-y py-2 overflow-hidden"
       onMouseEnter={() => (pausedRef.current = true)}
       onMouseLeave={() => (pausedRef.current = false)}
     >
       <div className="flex items-center">
-        <div ref={trackRef} className="flex items-center gap-6">
+        <div ref={trackRef} className="flex items-center gap-4">
           {duplicatedItems.map((item, index) => {
             const isPositive = (item.change || 0) >= 0;
             const changeAbs = item.change !== null ? Math.abs(item.change) : null;
@@ -120,21 +119,21 @@ export function HoldingsTicker() {
             return (
               <div
                 key={index}
-                className={`flex flex-col items-center justify-center rounded-xl px-5 py-3 min-w-[200px] shadow-sm ${
+                className={`flex flex-col items-center justify-center rounded-lg px-3 py-1.5 min-w-[160px] shadow-sm ${
                   isPositive ? 'bg-green-50' : 'bg-red-50'
                 }`}
               >
                 {/* Symbol + Price */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span
                     className={`font-black uppercase tracking-wider ${
-                      item.isUnderlying ? 'text-base opacity-80' : 'text-xl'
+                      item.isUnderlying ? 'text-xs opacity-80' : 'text-sm'
                     }`}
                   >
                     {item.symbol}
                   </span>
 
-                  <span className="font-bold text-lg">
+                  <span className="font-bold text-sm">
                     {item.price !== null
                       ? new Intl.NumberFormat('en-CA', {
                           style: 'currency',
@@ -146,12 +145,12 @@ export function HoldingsTicker() {
                   </span>
                 </div>
 
-                {/* Gain/Loss below */}
-                <div className="mt-1.5 flex items-center gap-1.5 text-sm">
+                {/* Gain/Loss below – single line */}
+                <div className="mt-1 flex items-center gap-1 text-xs whitespace-nowrap">
                   {isPositive ? (
-                    <ArrowUpRight className="h-5 w-5 text-green-600" />
+                    <ArrowUpRight className="h-3 w-3 text-green-600" />
                   ) : (
-                    <ArrowDownRight className="h-5 w-5 text-red-600" />
+                    <ArrowDownRight className="h-3 w-3 text-red-600" />
                   )}
                   <span className={`font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
                     {changeAbs !== null

@@ -1,4 +1,4 @@
-// src/app/dashboard/components/PrimaryHoldingsTable.tsx (updated: robust allocation % with fallback sum of displayed holdings if prop totalValue 0; no sorting (static descending allocation); daily change percent primary + $ in brackets with arrow – reliable, no crashes)
+// src/app/dashboard/components/PrimaryHoldingsTable.tsx (updated: flat line fallback if no day_chart data – visible line after hours; faint X/Y axis lines (no labels/ticks); line connecting points colored green/red; domain padding; reliable premium mini chart)
 'use client';
 
 import { ArrowUp, ArrowDown } from 'lucide-react';
@@ -10,6 +10,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+} from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAllHoldings } from '@/lib/queries';
@@ -21,23 +30,21 @@ interface Holding {
   market_value: number | null;
   daily_change: number | null;
   daily_change_percent: number | null;
+  day_chart?: { time: number; price: number }[];
 }
 
 interface Props {
-  totalValue: number; // Global total from dashboard (combined all portfolios)
+  totalValue: number;
 }
 
 export function PrimaryHoldingsTable({ totalValue }: Props) {
   const { data: holdings = [], isLoading } = useAllHoldings();
 
-  // Primary holdings only (stocks/ETFs)
   const primaryHoldings = holdings.filter((h: Holding) => h.type === 'stock' || h.type === 'etf');
 
-  // Fallback: if global total 0 or missing, use sum of primary market_values
   const localTotal = primaryHoldings.reduce((sum, h) => sum + (h.market_value || 0), 0);
   const effectiveTotal = totalValue > 0 ? totalValue : localTotal;
 
-  // Static sort: descending by allocation %
   const sortedHoldings = [...primaryHoldings].sort((a, b) => {
     const allocA = effectiveTotal > 0 && a.market_value !== null ? (a.market_value / effectiveTotal) * 100 : 0;
     const allocB = effectiveTotal > 0 && b.market_value !== null ? (b.market_value / effectiveTotal) * 100 : 0;
@@ -89,6 +96,7 @@ export function PrimaryHoldingsTable({ totalValue }: Props) {
                 <TableHead className="text-right">Market Value</TableHead>
                 <TableHead className="text-right">Allocation %</TableHead>
                 <TableHead className="text-right">Daily Change</TableHead>
+                <TableHead className="text-center">1-Day Chart</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -96,6 +104,12 @@ export function PrimaryHoldingsTable({ totalValue }: Props) {
                 const isPositive = (h.daily_change_percent || 0) >= 0;
                 const changeAbs = h.daily_change !== null ? Math.abs(h.daily_change) : null;
                 const alloc = effectiveTotal > 0 && h.market_value !== null ? (h.market_value / effectiveTotal) * 100 : 0;
+
+                // Chart data – use day_chart if available, fallback flat line from current_price
+                const chartPoints = h.day_chart && h.day_chart.length > 0 ? h.day_chart : [];
+                const chartData = chartPoints.length > 0
+                  ? chartPoints.map(p => ({ price: p.price }))
+                  : Array(20).fill({ price: h.current_price || 0 }); // Flat line – visible after hours
 
                 return (
                   <TableRow key={h.id}>
@@ -131,18 +145,60 @@ export function PrimaryHoldingsTable({ totalValue }: Props) {
                           ) : (
                             <ArrowDown className="h-4 w-4 text-red-600" />
                           )}
-                          <span className={`font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                          <span className={`font-bold ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
                             {isPositive ? '+' : ''}{h.daily_change_percent.toFixed(2)}%
-                            <span className="text-sm opacity-80">
-                              {' '}
-                              ({new Intl.NumberFormat('en-CA', {
-                                style: 'currency',
-                                currency: 'CAD',
-                              }).format(changeAbs!)})
-                            </span>
+                          </span>
+                          <span className={`text-sm opacity-80 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                            ({new Intl.NumberFormat('en-CA', {
+                              style: 'currency',
+                              currency: 'CAD',
+                            }).format(changeAbs!)})
                           </span>
                         </div>
                       )}
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <ResponsiveContainer width={140} height={60}>
+                        <LineChart data={chartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                          {/* Faint axis lines – no labels/ticks */}
+                          <XAxis hide />
+                          <YAxis
+                            domain={['dataMin - 0.5', 'dataMax + 0.5']}
+                            hide
+                          />
+                          <CartesianGrid stroke="none" />
+
+                          {/* Line – green/red */}
+                          <Line
+                            type="monotone"
+                            dataKey="price"
+                            stroke={isPositive ? '#10b981' : '#ef4444'}
+                            strokeWidth={2}
+                            dot={false}
+                          />
+
+                          {/* Tooltip – price on hover */}
+                          <Tooltip
+                            cursor={{ stroke: '#e0e0e0', strokeDasharray: '3 3', strokeOpacity: 0.5 }}
+                            content={({ active, payload }) => {
+                              if (active && payload && payload.length > 0) {
+                                const price = payload[0].value as number;
+                                return (
+                                  <div className="bg-white border border-gray-300 rounded shadow-sm px-2 py-1 text-xs font-medium">
+                                    {new Intl.NumberFormat('en-CA', {
+                                      style: 'currency',
+                                      currency: 'CAD',
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    }).format(price)}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
                     </TableCell>
                   </TableRow>
                 );

@@ -54,6 +54,10 @@ class HoldingUpdate(BaseModel):
     underlyings: Optional[List[UnderlyingCreate]] = None
     currency: Optional[Currency] = None
 
+class DayPoint(BaseModel):
+    time: int
+    price: float
+
 class HoldingResponse(HoldingBase):
     id: int
     current_price: Optional[float] = None
@@ -72,6 +76,8 @@ class HoldingResponse(HoldingBase):
     
     underlyings: List[Underlying] = []
     underlying_details: List[UnderlyingDetail] = []
+
+    day_chart: Optional[List[DayPoint]] = None
 
     class Config:
         from_attributes = True

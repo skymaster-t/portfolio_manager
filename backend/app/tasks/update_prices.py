@@ -1,4 +1,4 @@
-# backend/app/tasks/update_prices.py (updated: runs strictly 8:00 AM – 9:00 PM Toronto time on trading days only)
+# backend/app/tasks/update_prices.py (updated: runs every minute 24/7 – yfinance returns last close after hours; updates main + underlyings; fetches 1-day chart only during market hours to avoid empty; null-safe, production-ready)
 from sqlalchemy.orm import Session, joinedload
 from app.database import SessionLocal
 from app.models import Holding
@@ -6,30 +6,20 @@ from app.utils.yahoo import batch_fetch_prices
 from app.celery_config import celery_app
 from app.main import r
 import logging
-import pytz
 from datetime import datetime
+import yfinance as yf
+import pytz
 import holidays
 
 logger = logging.getLogger(__name__)
 
 celery = celery_app
 
-def is_update_window() -> bool:
-    """Allow price updates only on trading days between 8:00 AM and 9:00 PM Toronto time"""
+def is_trading_day() -> bool:
+    """Skip holidays only – allow after-hours last close"""
     tz = pytz.timezone("America/Toronto")
     now = datetime.now(tz)
 
-    # Weekend
-    if now.weekday() >= 5:
-        logger.info("Price update skipped: Weekend")
-        return False
-
-    # Outside 8 AM – 9 PM
-    if now.hour < 8 or now.hour >= 21:
-        logger.info(f"Price update skipped: Outside 8AM-9PM window ({now.strftime('%H:%M ET')})")
-        return False
-
-    # Holiday (CA ON + US)
     ca_holidays = holidays.CA(prov="ON", years=now.year)
     us_holidays = holidays.US(years=now.year)
     combined_holidays = ca_holidays | us_holidays
@@ -41,10 +31,11 @@ def is_update_window() -> bool:
     return True
 
 @celery.task(bind=True, name="app.tasks.update_prices.update_all_prices")
-def update_all_prices(self, force: bool = False):
-    if not force and not is_update_window():
-        logger.info("CELERY TASK SKIPPED: Outside allowed update window (use force=True to override)")
-        return "Skipped: Outside 8AM-9PM trading day window"
+def update_all_prices(self):
+    """Update prices every minute – runs 24/7 (last close after hours)"""
+    if not is_trading_day():
+        logger.info("Price update skipped: Holiday")
+        return "Skipped: Holiday"
 
     db: Session = SessionLocal()
     try:
@@ -54,16 +45,17 @@ def update_all_prices(self, force: bool = False):
         underlying_symbols = {u.symbol for h in holdings for u in (h.underlyings or [])}
         all_symbols = list(main_symbols.union(underlying_symbols))
 
-        # Always include FX rate
         if "USDCAD=X" not in all_symbols:
             all_symbols.append("USDCAD=X")
 
-        logger.info(f"CELERY TASK: Fetching prices for {len(all_symbols)} symbols (force={force})")
+        logger.info(f"CELERY TASK: Fetching prices for {len(all_symbols)} symbols")
         price_map = batch_fetch_prices(all_symbols)
 
         updated_count = 0
         now = datetime.utcnow()
+
         for holding in holdings:
+            # Main holding
             data = price_map.get(holding.symbol, {})
             price = data.get("price")
             if price is not None:
@@ -79,17 +71,45 @@ def update_all_prices(self, force: bool = False):
                 holding.last_price_update = now
                 updated_count += 1
 
-        db.commit()
-        logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings")
+            # Underlyings
+            for u in (holding.underlyings or []):
+                u_data = price_map.get(u.symbol, {})
+                u_price = u_data.get("price")
+                if u_price is not None:
+                    u.current_price = u_price
+                    u.daily_change = u_data.get("change")
+                    u.daily_change_percent = u_data.get("change_percent")
 
-        # Cache FX rate
+            # 1-day chart – only during market hours (5m data available)
+            tz = pytz.timezone("America/Toronto")
+            local_now = datetime.now(tz)
+            if 8 <= local_now.hour < 21:  # Market hours
+                try:
+                    ticker = yf.Ticker(holding.symbol)
+                    hist = ticker.history(period="1d", interval="5m")
+                    if not hist.empty:
+                        day_points = hist['Close'].dropna().to_list()
+                        holding.day_chart = [
+                            {"time": int(idx.timestamp() * 1000), "price": float(price)}
+                            for idx, price in zip(hist.index, day_points)
+                        ]
+                    else:
+                        holding.day_chart = []
+                except Exception as e:
+                    logger.warning(f"Failed to fetch 1-day chart for {holding.symbol}: {e}")
+                    holding.day_chart = []
+            # After hours: keep previous chart
+
+        db.commit()
+        logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings + underlyings")
+
+        # Cache FX
         usdcad_data = price_map.get("USDCAD=X", {})
         usdcad_price = usdcad_data.get("price")
         if usdcad_price is not None:
             r.set("fx:USDCAD", usdcad_price, ex=3600)
-            logger.info(f"Updated cached FX rate USDCAD=X → {usdcad_price}")
 
-        return f"Updated {updated_count} holdings"
+        return f"Updated {updated_count} holdings + underlyings"
 
     except Exception as e:
         db.rollback()

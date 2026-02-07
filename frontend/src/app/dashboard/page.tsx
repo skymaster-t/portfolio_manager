@@ -136,13 +136,7 @@ export default function DashboardPage() {
 
       {/* Live Holdings Ticker */}
       <Card>
-        <CardHeader>
-          <CardTitle>Live Holdings Ticker</CardTitle>
-          <CardDescription>Current prices and daily changes</CardDescription>
-        </CardHeader>
-        <CardContent className="py-0">
-          <HoldingsTicker />
-        </CardContent>
+        <HoldingsTicker />
       </Card>
 
       {/* Intraday + Primary Holdings Table side-by-side */}
