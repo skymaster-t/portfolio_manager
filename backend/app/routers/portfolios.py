@@ -37,6 +37,10 @@ def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_
         db.query(Portfolio).update({Portfolio.is_default: False})
         db.commit()
 
+    # Set display_order so new portfolio appears at the far right
+    max_order = db.query(func.max(Portfolio.display_order)).scalar()
+    new_display_order = (max_order or -1) + 1 if max_order is not None else 0
+
     new_portfolio = Portfolio(
         name=portfolio_data.name,
         is_default=portfolio_data.is_default,
@@ -90,33 +94,30 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
     db.commit()
     return None
 
-@router.post("/reorder")
+@router.put("/reorder")
 def reorder_portfolios(request: ReorderRequest, db: Session = Depends(get_db)):
-    order = request.order
-    for index, portfolio_id in enumerate(order):
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            raise HTTPException(status_code=404, detail=f"Portfolio {portfolio_id} not found")
-        portfolio.display_order = index
-    db.commit()
-    return {"detail": "Order updated successfully"}
+    """
+    Update display_order based on frontend drag-and-drop order.
+    Lower index in request.order = leftmost (lowest display_order value).
+    """
+    if not request.order:
+        raise HTTPException(status_code=400, detail="Order list cannot be empty")
 
-@router.get("/history/latest/all", response_model=List[PortfolioHistoryResponse])
-def get_latest_portfolio_histories(db: Session = Depends(get_db)):
-    subq = db.query(
-        PortfolioHistory.portfolio_id,
-        func.max(PortfolioHistory.timestamp).label('max_timestamp')
-    ).group_by(PortfolioHistory.portfolio_id).subquery()
+    # Validate all IDs exist
+    existing_ids = {p.id for p in db.query(Portfolio.id).all()}
+    for pid in request.order:
+        if pid not in existing_ids:
+            raise HTTPException(status_code=404, detail=f"Portfolio ID {pid} not found")
 
-    latest = db.query(PortfolioHistory).join(
-        subq,
-        and_(
-            PortfolioHistory.portfolio_id == subq.c.portfolio_id,
-            PortfolioHistory.timestamp == subq.c.max_timestamp
+    # Assign sequential display_order starting from 0
+    for index, portfolio_id in enumerate(request.order):
+        db.query(Portfolio).filter(Portfolio.id == portfolio_id).update(
+            {Portfolio.display_order: index}
         )
-    ).all()
 
-    return latest
+    db.commit()
+    logger.info(f"Portfolio order updated: {request.order}")
+    return {"message": "Portfolio order saved successfully"}
 
 @router.get("/global/history/latest", response_model=GlobalHistoryResponse)
 def get_latest_global_history(db: Session = Depends(get_db)):
@@ -146,98 +147,30 @@ def get_portfolios_summary(db: Session = Depends(get_db)):
     Returns enriched summary for every portfolio (total value in CAD, performance, pie data).
     Uses cached USDCAD rate from Redis.
     """
-    portfolios = db.query(Portfolio).all()
-    holdings = db.query(Holding).all()
-
-    rate_str = r.get("fx:USDCAD")
-    rate = float(rate_str.decode("utf-8") if rate_str else 1.37)
-
-    port_holdings = defaultdict(list)
-    for h in holdings:
-        port_holdings[h.portfolio_id].append(h)
-
-    summaries = []
-    for port in portfolios:
-        ph = port_holdings.get(port.id, [])
-
-        total_value = 0.0
-        daily_change = 0.0
-        gain_loss = 0.0
-        pie_data = []
-
-        for h in ph:
-            is_cad = h.symbol.upper().endswith('.TO')
-            native_market = h.market_value or (h.current_price or 0) * h.quantity
-            native_daily = (h.daily_change or 0) * h.quantity
-            native_gain = h.all_time_gain_loss or ((h.current_price or 0) - h.purchase_price) * h.quantity
-
-            contrib_market = native_market if is_cad else native_market * rate
-            contrib_daily = native_daily if is_cad else native_daily * rate
-            contrib_gain = native_gain if is_cad else native_gain * rate
-
-            total_value += contrib_market
-            daily_change += contrib_daily
-            gain_loss += contrib_gain
-
-            if contrib_market > 0:
-                pie_data.append(PieItem(name=h.symbol, value=round(contrib_market, 2)))
-
-        yesterday_value = total_value - daily_change
-        daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0.0
-
-        cost_basis = total_value - gain_loss
-        all_time_percent = (gain_loss / cost_basis * 100) if cost_basis > 0 else 0.0
-
-        pie_data = sorted(pie_data, key=lambda x: x.value, reverse=True)
-
-        summaries.append(
-            PortfolioSummary(
-                id=port.id,
-                name=port.name,
-                isDefault=port.is_default,
-                totalValue=round(total_value, 2),
-                gainLoss=round(gain_loss, 2),
-                dailyChange=round(daily_change, 2),
-                dailyPercent=round(daily_percent, 2),
-                allTimePercent=round(all_time_percent, 2),
-                pieData=pie_data,
-            )
-        )
-
-    return summaries
-    
-@router.get("/summaries", response_model=List[PortfolioSummary])
-def get_portfolios_summaries(db: Session = Depends(get_db)):
+    # Query portfolios in display order so summaries are returned left-to-right
     portfolios = (
         db.query(Portfolio)
         .order_by(Portfolio.display_order.asc().nulls_last(), Portfolio.id.asc())
         .all()
     )
-    holdings = db.query(Holding).all()
 
-    # Get current FX rate (1 USD → CAD)
+    # Fetch FX rate once (same logic as your existing code)
     rate_str = r.get("fx:USDCAD")
-    rate = float(rate_str.decode("utf-8") if rate_str else 1.37)
-
-    # Group holdings by portfolio
-    port_holdings = defaultdict(list)
-    for h in holdings:
-        port_holdings[h.portfolio_id].append(h)
+    rate = float(rate_str.decode("utf-8")) if rate_str else 1.37
 
     summaries = []
     for port in portfolios:
-        ph = port_holdings.get(port.id, [])
-
+        holdings = port.holdings  # Assuming relationship loaded or eager
         total_value = 0.0
         daily_change = 0.0
         gain_loss = 0.0
         pie_data = []
 
-        for h in ph:
-            is_cad = h.symbol.upper().endswith('.TO')
-            native_market = h.market_value or (h.current_price or 0) * h.quantity
+        for h in holdings:
+            is_cad = h.currency == "CAD"  # or your detection logic
+            native_market = (h.current_price or 0) * h.quantity
             native_daily = (h.daily_change or 0) * h.quantity
-            native_gain = h.all_time_gain_loss or ((h.current_price or 0) - h.purchase_price) * h.quantity
+            native_gain = ((h.current_price or 0) - h.purchase_price) * h.quantity
 
             contrib_market = native_market if is_cad else native_market * rate
             contrib_daily = native_daily if is_cad else native_daily * rate
@@ -273,6 +206,74 @@ def get_portfolios_summaries(db: Session = Depends(get_db)):
         )
 
     return summaries
+    
+# @router.get("/summaries", response_model=List[PortfolioSummary])
+# def get_portfolios_summaries(db: Session = Depends(get_db)):
+#     portfolios = (
+#         db.query(Portfolio)
+#         .order_by(Portfolio.display_order.asc().nulls_last(), Portfolio.id.asc())
+#         .all()
+#     )
+#     holdings = db.query(Holding).all()
+
+#     # Get current FX rate (1 USD → CAD)
+#     rate_str = r.get("fx:USDCAD")
+#     rate = float(rate_str.decode("utf-8") if rate_str else 1.37)
+
+#     # Group holdings by portfolio
+#     port_holdings = defaultdict(list)
+#     for h in holdings:
+#         port_holdings[h.portfolio_id].append(h)
+
+#     summaries = []
+#     for port in portfolios:
+#         ph = port_holdings.get(port.id, [])
+
+#         total_value = 0.0
+#         daily_change = 0.0
+#         gain_loss = 0.0
+#         pie_data = []
+
+#         for h in ph:
+#             is_cad = h.symbol.upper().endswith('.TO')
+#             native_market = h.market_value or (h.current_price or 0) * h.quantity
+#             native_daily = (h.daily_change or 0) * h.quantity
+#             native_gain = h.all_time_gain_loss or ((h.current_price or 0) - h.purchase_price) * h.quantity
+
+#             contrib_market = native_market if is_cad else native_market * rate
+#             contrib_daily = native_daily if is_cad else native_daily * rate
+#             contrib_gain = native_gain if is_cad else native_gain * rate
+
+#             total_value += contrib_market
+#             daily_change += contrib_daily
+#             gain_loss += contrib_gain
+
+#             if contrib_market > 0:
+#                 pie_data.append({"name": h.symbol, "value": round(contrib_market, 2)})
+
+#         yesterday_value = total_value - daily_change
+#         daily_percent = (daily_change / yesterday_value * 100) if yesterday_value > 0 else 0.0
+
+#         cost_basis = total_value - gain_loss
+#         all_time_percent = (gain_loss / cost_basis * 100) if cost_basis > 0 else 0.0
+
+#         pie_data = sorted(pie_data, key=lambda x: x["value"], reverse=True)
+
+#         summaries.append(
+#             PortfolioSummary(
+#                 id=port.id,
+#                 name=port.name,
+#                 isDefault=port.is_default,
+#                 totalValue=round(total_value, 2),
+#                 gainLoss=round(gain_loss, 2),
+#                 dailyChange=round(daily_change, 2),
+#                 dailyPercent=round(daily_percent, 2),
+#                 allTimePercent=round(all_time_percent, 2),
+#                 pieData=pie_data,
+#             )
+#         )
+
+#     return summaries
 
 @router.get("/global-history", response_model=List[GlobalHistoryResponse])
 def get_global_history(db: Session = Depends(get_db)):

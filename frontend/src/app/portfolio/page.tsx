@@ -9,9 +9,8 @@ import { formatDistanceToNow } from 'date-fns';
 import { PortfolioHeader } from './components/PortfolioHeader';
 import { PortfolioValueChart } from './components/PortfolioValueChart';
 import { PortfolioGrid } from './components/PortfolioGrid';
-import { HoldingFormDialog } from './components/HoldingFormDialog';
-import { PortfolioFormDialog } from './components/PortfolioFormDialog';
-import { DeleteConfirmDialog } from './components/DeleteConfirmDialog';
+import { PortfolioFormDialog } from '../holdings/components/PortfolioFormDialog';
+import { DeleteConfirmDialog } from '../holdings/components/DeleteConfirmDialog';
 import { usePortfolioMutations } from './hooks/usePortfolioMutations';
 import { useGlobalIntradayHistory, usePortfolioSummaries, useAllHoldings, useFxRate } from '@/lib/queries';
 
@@ -71,6 +70,8 @@ export default function PortfolioPage() {
 
   const isLoading = globalLoading || summariesLoading || holdingsLoading;
 
+  const isFormPending = createPortfolio.isPending || updatePortfolio.isPending;
+
   // Last updated timer
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
@@ -125,11 +126,11 @@ export default function PortfolioPage() {
         exchangeRate={exchangeRate}
       />
 
-      {/* Portfolio Form Dialog */}
+      {/* FIXED: prop name matches component interface + added isPending */}
       <PortfolioFormDialog
         open={openPortfolioForm}
         onOpenChange={setOpenPortfolioForm}
-        portfolio={selectedPortfolio}
+        selectedPortfolio={selectedPortfolio}
         onSubmit={(data) => {
           if (selectedPortfolio) {
             updatePortfolio.mutate({ id: selectedPortfolio.id, ...data });
@@ -139,39 +140,8 @@ export default function PortfolioPage() {
           setOpenPortfolioForm(false);
           setSelectedPortfolio(null);
         }}
-      />
-
-      {/* Holding Form Dialog */}
-      <HoldingFormDialog
-        open={openHoldingForm}
-        onOpenChange={setOpenHoldingForm}
-        holding={selectedHolding}
-        portfolios={portfoliosSummaries}
-        onSubmit={(data) => {
-          if (selectedHolding) {
-            updateHolding.mutate({ id: selectedHolding.id, ...data });
-          } else {
-            createHolding.mutate(data);
-          }
-          setOpenHoldingForm(false);
-          setSelectedHolding(null);
-        }}
-      />
-
-      {/* Delete Holding Confirm */}
-      <DeleteConfirmDialog
-        open={openHoldingDelete}
-        onOpenChange={setOpenHoldingDelete}
-        title="Delete Holding"
-        message={
-          selectedHolding && (
-            <p className="text-lg">
-              Are you sure you want to delete <strong>{selectedHolding.symbol}</strong>?
-            </p>
-          )
-        }
-        onConfirm={() => selectedHolding && deleteHolding.mutate(selectedHolding.id)}
-        isPending={deleteHolding.isPending}
+        isPending={isFormPending}
+        onOpenDeleteConfirm={() => {}} // kept for compatibility
       />
 
       {/* Delete Portfolio Confirm */}
