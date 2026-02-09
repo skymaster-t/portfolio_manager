@@ -1,4 +1,4 @@
-// src/app/holdings/components/PortfolioValueChart.tsx (full code: stylish area chart with gradient fill, current value vertical line + dot marker – inspired by Wealthsimple/Robinhood premium feel; no animation to avoid issues)
+// src/app/portfolio/components/PortfolioValueChart.tsx (full code: fixed missing CartesianGrid import; premium area chart with gradient fill, current value vertical line + large dot + value label – Robinhood/Wealthsimple style; clean, modern)
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -6,13 +6,11 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  Line,
   XAxis,
   YAxis,
-  CartesianGrid,
+  CartesianGrid, // ← Fixed: added missing import
   Tooltip,
   ReferenceLine,
-  Dot,
 } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -240,14 +238,16 @@ export function PortfolioValueChart() {
         )}
 
         <ResponsiveContainer width="100%" height={400}>
-          <AreaChart data={chartData.data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <AreaChart data={chartData.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
             <defs>
-              <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+              <linearGradient id="gradientFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" opacity={0.3} />
+
             <XAxis
               dataKey={chartData.useTimeAxis ? 'time' : 'label'}
               type={chartData.useTimeAxis ? 'number' : 'category'}
@@ -264,11 +264,11 @@ export function PortfolioValueChart() {
                       })
                   : undefined
               }
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
             />
             <YAxis
               domain={chartData.yDomain}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
               tickFormatter={(value) =>
                 new Intl.NumberFormat('en-CA', {
                   style: 'currency',
@@ -299,33 +299,50 @@ export function PortfolioValueChart() {
                 borderRadius: '8px',
               }}
             />
-            {/* Gradient area fill */}
+
             <Area
               type="monotone"
               dataKey="value"
               stroke="#6366f1"
               strokeWidth={3}
               fillOpacity={1}
-              fill="url(#colorValue)"
+              fill="url(#gradientFill)"
             />
 
-            {/* Current value marker – vertical line + dot */}
+            {/* Current value marker – vertical line + large dot + value label */}
             {chartData.data.length > 0 && (
               <>
                 <ReferenceLine
                   x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : chartData.data[chartData.data.length - 1].label}
                   stroke="#6366f1"
-                  strokeDasharray="3 3"
-                  strokeOpacity={0.5}
+                  strokeDasharray="5 5"
+                  strokeOpacity={0.6}
                 />
-                <Dot
+
+                <circle
                   cx={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
                   cy={chartData.data[chartData.data.length - 1].value}
-                  r={6}
+                  r={8}
                   fill="#6366f1"
                   stroke="#fff"
                   strokeWidth={3}
                 />
+
+                <text
+                  x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
+                  y={chartData.data[chartData.data.length - 1].value - 15}
+                  textAnchor="middle"
+                  fill="#1f2937"
+                  fontSize={14}
+                  fontWeight="bold"
+                >
+                  {new Intl.NumberFormat('en-CA', {
+                    style: 'currency',
+                    currency: 'CAD',
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                  }).format(chartData.latestValue)}
+                </text>
               </>
             )}
           </AreaChart>

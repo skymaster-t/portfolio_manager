@@ -1,3 +1,4 @@
+// src/app/dashboard/page.tsx (updated layout: Intraday + Primary Holdings Table side-by-side; Long-Term + Recent Performance side-by-side below – responsive grid, clean hierarchy)
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
@@ -16,8 +17,7 @@ import { PeriodSelector } from './components/PeriodSelector';
 import { PortfolioValueChart } from '../portfolio/components/PortfolioValueChart';
 import { HoldingsTicker } from './components/HoldingsTicker';
 import { PortfolioHeader } from '../portfolio/components/PortfolioHeader';
-import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable';
-import { TopMovers } from './components/TopMovers';
+import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable'; // New reusable table card
 import { useGlobalIntradayHistory, useGlobalDailyHistory, useFxRate } from '@/lib/queries';
 
 interface DailyGlobalHistory {
@@ -62,9 +62,9 @@ export default function DashboardPage() {
   const lastUpdatedRelative = useMemo(() => {
     if (lastUpdatedAt === 0) return 'Loading...';
     return formatDistanceToNow(lastUpdatedAt, { addSuffix: true });
-  }, [lastUpdatedAt]);
+  }, [lastUpdatedAt, currentTime]);
 
-  const isOverallLoading = dailyLoading || globalLoading;
+  const isLoading = dailyLoading || globalLoading;
 
   const { chartData, tableData } = useMemo(() => {
     if (rawDailyHistory.length === 0) return { chartData: [], tableData: [] };
@@ -73,69 +73,53 @@ export default function DashboardPage() {
 
     let startDate: Date | null = null;
     switch (period) {
-      case '1W':
-        startDate = subDays(now, 7);
-        break;
-      case '1M':
-        startDate = subMonths(now, 1);
-        break;
-      case '3M':
-        startDate = subMonths(now, 3);
-        break;
-      case 'YTD':
-        startDate = startOfYear(now);
-        break;
-      case '1Y':
-        startDate = subYears(now, 1);
-        break;
-      case '2Y':
-        startDate = subYears(now, 2);
-        break;
-      case '3Y':
-        startDate = subYears(now, 3);
-        break;
-      case 'All':
-      default:
-        startDate = null;
-        break;
+      case '1W': startDate = subDays(now, 7); break;
+      case '1M': startDate = subMonths(now, 1); break;
+      case '3M': startDate = subMonths(now, 3); break;
+      case 'YTD': startDate = startOfYear(now); break;
+      case '1Y': startDate = subYears(now, 1); break;
+      case '2Y': startDate = subYears(now, 2); break;
+      case '3Y': startDate = subYears(now, 3); break;
+      case 'All': startDate = null; break;
     }
 
     const filtered = startDate
-      ? rawDailyHistory.filter((d) => new Date(d.timestamp) >= startDate)
+      ? rawDailyHistory.filter((p: DailyGlobalHistory) => parseISO(p.timestamp) >= startDate)
       : rawDailyHistory;
 
-    // Explicitly sort for chart: oldest → newest (chronological order for line chart)
-    const sortedForChart = [...filtered].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-
-    const chartPoints = sortedForChart.map((d) => ({
-      label: format(parseISO(d.timestamp), 'MMM d'),
-      tooltipLabel: format(parseISO(d.timestamp), 'MMM d, yyyy'),
-      value: d.total_value,
-      daily_change: d.daily_change,
-      daily_percent: d.daily_percent,
-      all_time_percent: d.all_time_percent,
+    const parsed = filtered.map((p: DailyGlobalHistory) => ({
+      date: parseISO(p.timestamp),
+      ...p,
     }));
 
-    // Explicitly sort for table: newest → oldest (most recent on top)
-    const sortedForTable = [...rawDailyHistory].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    const chart = parsed
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((p) => ({
+        label: format(p.date, 'MMM d'),
+        tooltipLabel: format(p.date, 'MMM d, yyyy'),
+        value: p.total_value,
+        daily_change: p.daily_change,
+        daily_percent: p.daily_percent,
+        all_time_percent: p.all_time_percent,
+      }));
 
-    const recentTable = sortedForTable.slice(0, 20).map((d) => ({
-      tooltipLabel: format(parseISO(d.timestamp), 'MMM d, yyyy'),
-      value: d.total_value,
-      daily_change: d.daily_change,
-      daily_percent: d.daily_percent,
-      all_time_percent: d.all_time_percent,
-    }));
+    const table = parsed
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .slice(0, 20)
+      .map((p) => ({
+        tooltipLabel: format(p.date, 'MMM d, yyyy'),
+        value: p.total_value,
+        daily_change: p.daily_change,
+        daily_percent: p.daily_percent,
+        all_time_percent: p.all_time_percent,
+      }));
 
-    return { chartData: chartPoints, tableData: recentTable };
+    return { chartData: chart, tableData: table };
   }, [rawDailyHistory, period]);
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="container mx-auto py-8 space-y-12">
+      {/* Portfolio Overview Header */}
       <PortfolioHeader
         totalValue={latest?.total_value || 0}
         gainLoss={latest?.all_time_gain || 0}
@@ -146,7 +130,7 @@ export default function DashboardPage() {
         displayCurrency={displayCurrency}
         setDisplayCurrency={setDisplayCurrency}
         exchangeRate={exchangeRate}
-        isLoading={isOverallLoading}
+        isLoading={isLoading}
         lastUpdated={lastUpdatedRelative}
       />
 
@@ -155,36 +139,23 @@ export default function DashboardPage() {
         <HoldingsTicker />
       </Card>
 
-      {/* Main Row: Left = Intraday (increased height) + Top Movers | Right = Primary Holdings */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-12">
-        {/* Left stacked column */}
-        <div className="flex flex-col gap-8">
-          {/* Intraday – ~10% taller, strictly contained */}
-          <Card className="overflow-hidden">
-            <CardHeader>
-              <CardTitle>Intraday Portfolio Value</CardTitle>
-              <CardDescription>Real-time updates (8 AM – 5 PM market window)</CardDescription>
-            </CardHeader>
-            <CardContent className="p-0 overflow-hidden">
-              {/* Increased ~10% (mobile: 320px → 352px, desktop: 480px → 528px) */}
-              <div className="h-88 md:h-[528px] w-full">
-                <PortfolioValueChart noCard hidePeriodSelector />
-              </div>
-            </CardContent>
-          </Card>
+      {/* Intraday + Primary Holdings Table side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Intraday Portfolio Value</CardTitle>
+            <CardDescription>Real-time updates (8 AM – 5 PM market window)</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <PortfolioValueChart noCard hidePeriodSelector />
+          </CardContent>
+        </Card>
 
-          {/* Top Movers – automatically fills remaining space */}
-          <div className="flex-1 min-h-0">
-            <TopMovers />
-          </div>
-        </div>
-
-        {/* Right – Primary Holdings Table */}
         <PrimaryHoldingsTable />
       </div>
 
-      {/* Long-Term + Recent Performance */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-12">
+      {/* Long-Term + Recent Performance side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <Card>
           <CardHeader>
             <CardTitle>Long-Term Portfolio Value</CardTitle>
