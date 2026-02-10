@@ -39,12 +39,13 @@ def create_portfolio(portfolio_data: PortfolioCreate, db: Session = Depends(get_
 
     # Set display_order so new portfolio appears at the far right
     max_order = db.query(func.max(Portfolio.display_order)).scalar()
-    new_display_order = (max_order or -1) + 1 if max_order is not None else 0
+    new_display_order = (max_order + 1) if max_order is not None else 0
 
     new_portfolio = Portfolio(
         name=portfolio_data.name,
         is_default=portfolio_data.is_default,
-        user_id=1
+        user_id=1,
+        display_order=new_display_order,
     )
     db.add(new_portfolio)
     db.commit()
@@ -96,14 +97,16 @@ def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
 
 @router.post("/reorder")
 def reorder_portfolios(request: ReorderRequest, db: Session = Depends(get_db)):
-    order = request.order
-    for index, portfolio_id in enumerate(order):
-        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
-        if not portfolio:
-            raise HTTPException(status_code=404, detail=f"Portfolio {portfolio_id} not found")
-        portfolio.display_order = index
+    """
+    Receive a list of portfolio IDs in the desired left-to-right order
+    and update display_order accordingly (0 = leftmost, 1 = next, etc.).
+    """
+    for position, portfolio_id in enumerate(request.order):
+        db.query(Portfolio)\
+          .filter(Portfolio.id == portfolio_id)\
+          .update({Portfolio.display_order: position})
     db.commit()
-    return {"detail": "Order updated successfully"}
+    return {"detail": "Portfolio order updated successfully"}
 
 @router.get("/history/latest/all", response_model=List[PortfolioHistoryResponse])
 def get_latest_portfolio_histories(db: Session = Depends(get_db)):
