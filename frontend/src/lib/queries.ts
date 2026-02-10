@@ -73,3 +73,14 @@ export function useFxRate(options?: UseQueryOptions<number, Error>) {
     ...options,
   });
 }
+
+export function useGlobalSectorAllocation() {
+  return useQuery({
+    queryKey: ['globalSectorAllocation'],
+    queryFn: async () => {
+      const { data } = await axios.get('http://localhost:8000/portfolios/global-sector-allocation');
+      return data;
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes – fresh enough for dashboard
+  });
+}

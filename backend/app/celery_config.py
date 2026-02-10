@@ -30,9 +30,10 @@ celery_app.conf.update(
 celery_app.autodiscover_tasks(['app.tasks'])
 
 try:
-    from app.tasks.update_prices import update_all_prices  # noqa: F401
-    from app.tasks.portfolio_history_task import save_portfolio_history_snapshot  # noqa: F401
-    from app.tasks.portfolio_history_task import save_daily_global_snapshot  # noqa: F401
+    from app.tasks.update_prices import update_all_prices
+    from app.tasks.portfolio_history_task import save_portfolio_history_snapshot
+    from app.tasks.portfolio_history_task import save_daily_global_snapshot
+    from app.tasks.update_symbol_sectors import update_symbol_sectors
 except ImportError as e:
     import logging
     logging.warning(f"Could not import tasks: {e}")
@@ -40,18 +41,19 @@ except ImportError as e:
 celery_app.conf.beat_schedule = {
     "update-stock-prices-every-1-min": {
         "task": "app.tasks.update_prices.update_all_prices",
-        "schedule": 60.0,  # Every 1 minute – faster updates during market hours (guarded internally)
+        "schedule": 60.0,
     },
     "portfolio-history-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_portfolio_history_snapshot",
-        "schedule": 300.0,  # Keep at 5 minutes – avoids excessive DB writes while prices update every minute
+        "schedule": 300.0,
     },
     "daily-eod-global-snapshot": {
         "task": "app.tasks.portfolio_history_task.save_daily_global_snapshot",
-        "schedule": crontab(
-            hour=16,      # 4:30 PM ET
-            minute=30,
-            day_of_week='mon-fri',
-        ),
+        "schedule": crontab(hour=16, minute=30, day_of_week='mon-fri'),
+    },
+    "update-symbol-sectors-twice-daily": {
+        "task": "app.tasks.update_symbol_sectors.update_symbol_sectors",
+        "schedule": crontab(hour='9,21', minute=0),  # 9 AM and 9 PM daily
+        # No day_of_week restriction – sector data can update any day (safe & simple)
     },
 }

@@ -1,15 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 from app.database import get_db
-from app.models import Portfolio, Holding, UnderlyingHolding, PortfolioHistory, GlobalHistory
+from app.models import (
+    Portfolio, 
+    Holding, 
+    UnderlyingHolding, 
+    PortfolioHistory, 
+    GlobalHistory,
+    SymbolSectorCache,
+    HoldingType,
+)
 from app.schemas import (
     PortfolioCreate,
     PortfolioResponse,
     PortfolioHistoryResponse,
     GlobalHistoryResponse,
     PortfolioSummary,
-    PieItem
+    PieItem,
+    ReorderRequest,          
+    GlobalSectorResponse,     
+    SectorItem,
 )
 from typing import List
 from pydantic import BaseModel
@@ -288,3 +299,87 @@ def get_global_history(db: Session = Depends(get_db)):
         .order_by(GlobalHistory.timestamp.desc())
         .all()  # Removed limit – returns all records (intraday + EOD), sorted newest first
     )
+
+@router.get("/global-sector-allocation", response_model=GlobalSectorResponse)
+def get_global_sector_allocation(db: Session = Depends(get_db)):
+    holdings = db.query(Holding).options(joinedload(Holding.underlyings)).all()
+
+    rate_str = r.get("fx:USDCAD")
+    rate = float(rate_str.decode("utf-8")) if rate_str else 1.37
+
+    sector_contrib = defaultdict(float)
+    total_value = 0.0
+
+    for h in holdings:
+        native_mv = h.market_value or (h.current_price or 0) * h.quantity
+        is_cad = h.symbol.upper().endswith('.TO')
+        mv_cad = native_mv if is_cad else native_mv * rate
+        total_value += mv_cad
+        if mv_cad <= 0:
+            continue
+
+        # Prefer manual underlyings for ETFs (more accurate than auto-fetched)
+        if h.type == HoldingType.etf and h.underlyings:
+            sum_alloc = sum(u.allocation_percent or 0 for u in h.underlyings)
+            if sum_alloc == 0:
+                sum_alloc = 100.0
+            for u in h.underlyings:
+                alloc = (u.allocation_percent or (100.0 / len(h.underlyings))) / sum_alloc
+                u_mv = mv_cad * alloc
+                cache = db.query(SymbolSectorCache).get(u.symbol)
+                if cache and cache.weightings:
+                    for item in cache.weightings:
+                        sector_contrib[item["sector"]] += u_mv * item["weight"]
+                else:
+                    sector_contrib["Other"] += u_mv
+        else:
+            # Use cached sector data for stocks / ETFs without manual underlyings
+            cache = db.query(SymbolSectorCache).get(h.symbol)
+            if cache and cache.weightings:
+                for item in cache.weightings:
+                    sector_contrib[item["sector"]] += mv_cad * item["weight"]
+            else:
+                sector_contrib["Other"] += mv_cad
+
+    # Consolidate small slices (<3%) into "Other"
+    sector_data = []
+    other_value = sector_contrib.pop("Other", 0.0)
+
+    for sector, value in sector_contrib.items():
+        percent = (value / total_value * 100) if total_value > 0 else 0
+        if percent < 3.0:
+            other_value += value
+        else:
+            sector_data.append(
+                SectorItem(
+                    sector=sector,
+                    value=round(value, 2),
+                    percentage=round(percent, 2),
+                )
+            )
+
+    if other_value > 0:
+        other_percent = (other_value / total_value * 100) if total_value > 0 else 0
+        sector_data.append(
+            SectorItem(
+                sector="Other",
+                value=round(other_value, 2),
+                percentage=round(other_percent, 2),
+            )
+        )
+
+    sector_data.sort(key=lambda x: x.percentage, reverse=True)
+
+    return GlobalSectorResponse(
+        totalValue=round(total_value, 2),
+        sectorData=sector_data,
+    )
+
+@router.get("/global-history", response_model=List[GlobalHistoryResponse])
+def get_global_history(db: Session = Depends(get_db)):
+    return (
+        db.query(GlobalHistory)
+        .order_by(GlobalHistory.timestamp.desc())
+        .all()
+    )
+

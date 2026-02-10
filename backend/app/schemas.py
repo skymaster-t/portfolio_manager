@@ -136,3 +136,23 @@ class PortfolioSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SectorItem(BaseModel):
+    sector: str
+    value: float
+    percentage: float
+
+    class Config:
+        from_attributes = True
+
+class GlobalSectorResponse(BaseModel):
+    totalValue: float
+    sectorData: List[SectorItem]
+
+    class Config:
+        from_attributes = True
+
+class ReorderRequest(BaseModel):
+    order: List[int]
+
+    

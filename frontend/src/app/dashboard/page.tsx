@@ -17,8 +17,9 @@ import { PeriodSelector } from './components/PeriodSelector';
 import { PortfolioValueChart } from '../portfolio/components/PortfolioValueChart';
 import { HoldingsTicker } from './components/HoldingsTicker';
 import { PortfolioHeader } from '../portfolio/components/PortfolioHeader';
-import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable'; // New reusable table card
-import { useGlobalIntradayHistory, useGlobalDailyHistory, useFxRate } from '@/lib/queries';
+import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable';
+import { SectorAllocationCard } from './components/SectorAllocationCard'; 
+import { useGlobalIntradayHistory, useGlobalDailyHistory, useFxRate, useGlobalSectorAllocation } from '@/lib/queries';
 
 interface DailyGlobalHistory {
   timestamp: string;
@@ -65,6 +66,23 @@ export default function DashboardPage() {
   }, [lastUpdatedAt, currentTime]);
 
   const isLoading = dailyLoading || globalLoading;
+  
+  const {
+    data: sectorResponse,
+    isLoading: sectorLoading,
+    isError: sectorIsError,
+    error: sectorError,
+  } = useGlobalSectorAllocation()
+
+  // Enhanced debug logging (keeps previous useEffect if you have it)
+  useEffect(() => {
+    if (sectorIsError) {
+      console.error('Sector Allocation API Error:', sectorError);
+    }
+  }, [sectorIsError, sectorError]);
+
+  const sectorDataArray = sectorResponse?.sectorData ?? [];
+  const sectorTotalValue = sectorResponse?.totalValue ?? 0;
 
   const { chartData, tableData } = useMemo(() => {
     if (rawDailyHistory.length === 0) return { chartData: [], tableData: [] };
@@ -193,6 +211,19 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+
+        <div className="col-span-full">
+          <SectorAllocationCard
+            data={sectorDataArray}
+            totalValue={sectorTotalValue}
+            isLoading={sectorLoading}
+            isError={sectorIsError}
+            errorMessage="Network error – backend unreachable"
+            displayCurrency={displayCurrency}
+            exchangeRate={exchangeRate}
+          />
+        </div>
+
       </div>
     </div>
   );

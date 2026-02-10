@@ -97,5 +97,16 @@ class GlobalHistory(Base):
     all_time_gain = Column(Float)
     all_time_percent = Column(Float)
 
-    # NEW: Flag to mark true end-of-day snapshots (for clean daily graphs)
+    # Flag to mark true end-of-day snapshots (for clean daily graphs)
     is_eod = Column(Boolean, default=False, server_default="false")
+
+class SymbolSectorCache(Base):
+    __tablename__ = "symbol_sector_cache"
+
+    symbol = Column(String, primary_key=True, index=True)
+    weightings = Column(JSONB, nullable=False)  # List[dict(sector=str, weight=float)]
+    last_updated = Column(DateTime, default=datetime.utcnow)
+
+    class Config:
+        from_attributes = True
+        
