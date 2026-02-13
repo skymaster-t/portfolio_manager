@@ -19,7 +19,7 @@ const navItems = [
   { name: 'Dashboard', href: '/dashboard' },
   { name: 'Portfolio', href: '/portfolio' },
   { name: 'Holdings', href: '/holdings' },
-  { name: 'Market', href: '/market' },
+  { name: 'Budget', href: '/budget' },
   { name: 'Analysis', href: '/analysis' },
 ];
 

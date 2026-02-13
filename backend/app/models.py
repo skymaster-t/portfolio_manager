@@ -1,5 +1,15 @@
 # backend/app/models.py (updated – added history models for per-portfolio and global snapshots)
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Enum, Table, Boolean, DateTime
+from sqlalchemy import (
+    Column, 
+    Integer, 
+    String, 
+    Float, 
+    ForeignKey, 
+    Enum, 
+    Table, 
+    Boolean, 
+    DateTime
+)
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -58,6 +68,10 @@ class Holding(Base):
 
     day_chart = Column(JSONB, nullable=True, server_default='[]')
 
+    dividend_annual_per_share = Column(Float, nullable=True)
+    dividend_yield_percent = Column(Float, nullable=True)
+    is_dividend_manual = Column(Boolean, default=False, nullable=False)
+
     portfolio = relationship("Portfolio", back_populates="holdings")
     underlyings = relationship("UnderlyingHolding", back_populates="holding")
     last_price_update = Column(DateTime, nullable=True)
@@ -109,4 +123,14 @@ class SymbolSectorCache(Base):
 
     class Config:
         from_attributes = True
-        
+
+class BudgetItem(Base):
+    __tablename__ = "budget_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    item_type = Column(String, nullable=False)  # 'income' or 'expense'
+    name = Column(String, nullable=False)
+    amount_monthly = Column(Float, nullable=False)
+    category = Column(String, nullable=True)
+

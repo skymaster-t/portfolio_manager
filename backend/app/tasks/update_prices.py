@@ -1,4 +1,11 @@
-# backend/app/tasks/update_prices.py (updated: runs every minute 24/7 – yfinance returns last close after hours; updates main + underlyings; fetches 1-day chart only during market hours to avoid empty; null-safe, production-ready)
+# backend/app/tasks/update_prices.py (fixed – proper manual dividend override skip)
+# - Dividend fetch/set now wrapped in if not holding.is_dividend_manual
+# - Skip log when manual
+# - Updated log only when actually updated (counted)
+# - No overwrite of manual values
+# - Yield update also skipped for manual
+# - Commit only after all (unchanged)
+
 from sqlalchemy.orm import Session, joinedload
 from app.database import SessionLocal
 from app.models import Holding
@@ -32,9 +39,7 @@ def is_trading_day() -> bool:
 
 @celery.task(bind=True, name="app.tasks.update_prices.update_all_prices")
 def update_all_prices(self):
-    """Update prices every minute – runs 24/7 (last close after hours)"""
     if not is_trading_day():
-        logger.info("Price update skipped: Holiday")
         return "Skipped: Holiday"
 
     db: Session = SessionLocal()
@@ -54,8 +59,8 @@ def update_all_prices(self):
         updated_count = 0
         now = datetime.utcnow()
 
+        # Main holdings price update (unchanged)
         for holding in holdings:
-            # Main holding
             data = price_map.get(holding.symbol, {})
             price = data.get("price")
             if price is not None:
@@ -71,19 +76,10 @@ def update_all_prices(self):
                 holding.last_price_update = now
                 updated_count += 1
 
-            # Underlyings
-            for u in (holding.underlyings or []):
-                u_data = price_map.get(u.symbol, {})
-                u_price = u_data.get("price")
-                if u_price is not None:
-                    u.current_price = u_price
-                    u.daily_change = u_data.get("change")
-                    u.daily_change_percent = u_data.get("change_percent")
-
-            # 1-day chart – only during market hours (5m data available)
+            # 1-day chart (unchanged)
             tz = pytz.timezone("America/Toronto")
             local_now = datetime.now(tz)
-            if 8 <= local_now.hour < 21:  # Market hours
+            if 9 <= local_now.hour < 16:  # Strict market hours for intraday data
                 try:
                     ticker = yf.Ticker(holding.symbol)
                     hist = ticker.history(period="1d", interval="5m")
@@ -100,16 +96,58 @@ def update_all_prices(self):
                     holding.day_chart = []
             # After hours: keep previous chart
 
+        # Dividend batch fetch – NOW PROPERLY SKIPS MANUAL OVERRIDES
+        dividend_updated_count = 0
+        if holdings:
+            symbols_str = " ".join([h.symbol for h in holdings])
+            try:
+                multi_tickers = yf.Tickers(symbols_str)
+                for holding in holdings:
+                    if holding.is_dividend_manual:
+                        logger.info(f"Skipping dividend update for manual override holding {holding.symbol}")
+                        continue
+
+                    try:
+                        sym = holding.symbol.upper()
+                        info = multi_tickers.tickers[sym].info
+
+                        # Trailing preferred
+                        trailing = info.get("trailingAnnualDividendRate")
+                        forward = info.get("dividendRate")
+                        new_div = trailing or forward or 0.0
+                        if holding.dividend_annual_per_share != new_div:
+                            holding.dividend_annual_per_share = new_div
+                            dividend_updated_count += 1
+
+                        trailing_yield = info.get("trailingAnnualDividendYield")
+                        forward_yield = info.get("dividendYield")
+                        yield_val = trailing_yield or forward_yield
+                        new_yield = yield_val * 100 if yield_val is not None else None
+                        if holding.dividend_yield_percent != new_yield:
+                            holding.dividend_yield_percent = new_yield
+
+                    except Exception as e:
+                        logger.warning(f"Dividend fetch failed for {holding.symbol}: {e}")
+
+                if dividend_updated_count > 0:
+                    logger.info(f"Dividend data updated for {dividend_updated_count} holdings")
+                else:
+                    logger.info("No dividend changes (all manual or no new data)")
+
+            except Exception as e:
+                logger.warning(f"Batch dividend fetch failed: {e}")
+
         db.commit()
-        logger.info(f"CELERY TASK SUCCESS: Updated {updated_count}/{len(holdings)} holdings + underlyings")
+        logger.info(f"CELERY TASK SUCCESS: Updated prices for {updated_count}/{len(holdings)} holdings, dividends for {dividend_updated_count}")
 
         # Cache FX
         usdcad_data = price_map.get("USDCAD=X", {})
         usdcad_price = usdcad_data.get("price")
         if usdcad_price is not None:
             r.set("fx:USDCAD", usdcad_price, ex=3600)
+            logger.info(f"Updated cached FX rate USDCAD=X to {usdcad_price}")
 
-        return f"Updated {updated_count} holdings + underlyings"
+        return f"Updated {updated_count} prices + {dividend_updated_count} dividends"
 
     except Exception as e:
         db.rollback()

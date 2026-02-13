@@ -7,6 +7,7 @@ from app.utils.yahoo import batch_fetch_prices, get_cached_price
 from typing import List, Dict, Optional
 import logging
 from datetime import datetime, timedelta
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/holdings", tags=["holdings"])
@@ -231,3 +232,33 @@ def get_all_holdings(db: Session = Depends(get_db)):
         db.commit()
 
     return holdings
+
+class DividendUpdate(BaseModel):
+    dividend_annual_per_share: Optional[float] = None
+    dividend_yield_percent: Optional[float] = None
+
+@router.patch("/{holding_id}/dividend")
+def update_holding_dividend(
+    holding_id: int,
+    update: DividendUpdate,
+    db: Session = Depends(get_db)
+):
+    holding = db.query(Holding).filter(Holding.id == holding_id).first()
+    if not holding:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    updates = update.dict(exclude_unset=True)
+    manual_set = False
+
+    if "dividend_annual_per_share" in updates:
+        holding.dividend_annual_per_share = updates["dividend_annual_per_share"]
+        manual_set = updates["dividend_annual_per_share"] is not None
+
+    if "dividend_yield_percent" in updates:
+        holding.dividend_yield_percent = updates["dividend_yield_percent"]
+        manual_set = updates["dividend_yield_percent"] is not None or manual_set
+
+    holding.is_dividend_manual = manual_set
+    db.commit()
+    db.refresh(holding)
+    return holding

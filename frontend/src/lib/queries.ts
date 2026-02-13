@@ -10,6 +10,10 @@ export const queryKeys = {
   globalDailyHistory: ['globalDailyHistory'] as const,
   allHoldings: ['allHoldings'] as const,
   portfolioSummaries: ['portfolioSummaries'] as const,
+  fxRate: ['fxRate'] as const,
+  globalSectorAllocation: ['globalSectorAllocation'] as const,
+  budgetSummary: ['budget', 'summary'] as const,
+  budgetItems: ['budget', 'items'] as const,
 };
 
 // Shared fetchers
@@ -64,23 +68,41 @@ export function usePortfolioSummaries(options?: UseQueryOptions<any[], Error>) {
 
 export function useFxRate(options?: UseQueryOptions<number, Error>) {
   return useQuery({
-    queryKey: ['fxRate'],
+    queryKey: queryKeys.fxRate,
     queryFn: () => axios.get(`${API_BASE}/fx/current`).then(res => res.data.usdcad_rate as number),
-    refetchInterval: 3600000, // Hourly refresh – FX rates don't fluctuate minute-to-minute
+    refetchInterval: 3600000,
     refetchIntervalInBackground: true,
     staleTime: 3600000,
-    initialData: 1.37, // Realistic fallback if fetch fails/initial load
+    initialData: 1.37,
     ...options,
   });
 }
 
-export function useGlobalSectorAllocation() {
+export function useGlobalSectorAllocation(options?: UseQueryOptions<any, Error>) {
   return useQuery({
-    queryKey: ['globalSectorAllocation'],
-    queryFn: async () => {
-      const { data } = await axios.get('http://localhost:8000/portfolios/global-sector-allocation');
-      return data;
-    },
-    staleTime: 5 * 60 * 1000, // 5 minutes – fresh enough for dashboard
+    queryKey: queryKeys.globalSectorAllocation,
+    queryFn: () => axios.get(`${API_BASE}/portfolios/global-sector-allocation`).then(res => res.data),
+    staleTime: 5 * 60 * 1000,
+    ...commonOptions,
+    ...options,
+  });
+}
+
+// Budget hooks – identical style to dashboard hooks (axios + API_BASE + commonOptions)
+export function useBudgetSummary(options?: UseQueryOptions<any, Error>) {
+  return useQuery({
+    queryKey: queryKeys.budgetSummary,
+    queryFn: () => axios.get(`${API_BASE}/budget/summary`).then(res => res.data),
+    ...commonOptions,
+    ...options,
+  });
+}
+
+export function useBudgetItems(options?: UseQueryOptions<any[], Error>) {
+  return useQuery({
+    queryKey: queryKeys.budgetItems,
+    queryFn: () => axios.get(`${API_BASE}/budget/items`).then(res => res.data),
+    ...commonOptions,
+    ...options,
   });
 }

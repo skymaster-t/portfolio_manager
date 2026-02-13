@@ -26,13 +26,15 @@ r = redis.Redis.from_url(REDIS_URL)
 
 app = FastAPI()
 
-# FIXED: Direct import of each router object (industry-standard, avoids AttributeError)
+# Direct import of each router object (industry-standard, avoids AttributeError)
+from app.routers.debug import router as debug_router
 from app.routers.holdings import router as holdings_router
 from app.routers.portfolios import router as portfolios_router
-from app.routers.debug import router as debug_router
+from app.routers.budget import router as budget_router
 
 app.include_router(holdings_router)
 app.include_router(portfolios_router)
+app.include_router(budget_router)
 app.include_router(debug_router, prefix="/debug")
 
 # Existing CORS middleware (kept unchanged)
@@ -56,7 +58,7 @@ def get_price(ticker: str):
         return {"ticker": ticker, "price": float(cached), "source": "cache"}
     return {"ticker": ticker, "price": "fallback_value", "source": "db/fmp"}
 
-# NEW: Current FX rate endpoint (for frontend currency toggle)
+# Current FX rate endpoint (for frontend currency toggle)
 @app.get("/fx/current")
 def get_current_fx_rate():
     rate_str = r.get("fx:USDCAD")

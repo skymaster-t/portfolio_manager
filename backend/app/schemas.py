@@ -155,4 +155,41 @@ class GlobalSectorResponse(BaseModel):
 class ReorderRequest(BaseModel):
     order: List[int]
 
-    
+class ItemType(str, Enum):
+    income = "income"
+    expense = "expense"
+
+class BudgetItemCreate(BaseModel):
+    item_type: ItemType
+    name: str
+    amount_monthly: float
+    category: Optional[str] = None
+
+class BudgetItemResponse(BudgetItemCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class DividendBreakdownItem(BaseModel):
+    holding_id: int
+    symbol: str
+    quantity: float
+    dividend_annual_per_share: Optional[float]
+    annual_dividends_cad: float
+    monthly_dividends_cad: float
+    is_manual: bool = False
+
+    class Config:
+        from_attributes = True
+
+class BudgetSummaryResponse(BaseModel):
+    expected_dividend_income_monthly_cad: float
+    expected_dividend_income_annual_cad: float
+    dividend_breakdown: List[DividendBreakdownItem]
+    other_income_monthly: float
+    total_expenses_monthly: float
+    total_income_monthly: float
+    net_surplus_monthly: float
+    income_items: List[BudgetItemResponse]
+    expense_items: List[BudgetItemResponse]
