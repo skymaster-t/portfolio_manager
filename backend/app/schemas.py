@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional, List
 from enum import Enum
 from datetime import datetime
@@ -176,6 +176,7 @@ class TransactionCreate(BaseModel):
     description: str
     amount: float
     category_id: int
+    account_id: Optional[int] = None
 
 class ItemType(str, Enum):
     income = "income"
@@ -222,22 +223,52 @@ class BudgetSummaryResponse(BaseModel):
     income_items: List[BudgetItemResponse]
     expense_items: List[BudgetItemResponse]
 
+class AccountCreate(BaseModel):
+    name: str
+    type: Optional[str] = None  # e.g., "checking", "credit_card"
+
+class AccountResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    type: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class TransactionCreate(BaseModel):
     date: datetime
     description: str
     amount: float
     category_id: int
 
-class TransactionResponse(TransactionCreate):
+class TransactionResponse(BaseModel):
     id: int
     user_id: int
+    date: datetime
+    description: str
     original_description: Optional[str] = None
+    amount: float
+    category_id: int
+    account_id: Optional[int] = None
     is_manual_override: bool = False
-    category: CategoryResponse
+
+    category: "CategoryResponse"           # forward ref if needed
+    account: Optional["AccountResponse"] = None
+
+    @computed_field
+    @property
+    def clean_description(self) -> str:
+        """Computed cleaned version of the description for display."""
+        from app.routers.transactions import normalize_vendor  # import here to avoid circular imports
+        return normalize_vendor(self.description)
 
     class Config:
         from_attributes = True
 
 class TransactionUpdate(BaseModel):
     category_id: int
+    account_id: Optional[int] = None
     
+
+        

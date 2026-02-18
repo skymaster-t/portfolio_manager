@@ -1,80 +1,88 @@
+// src/app/budget/components/CSVUpload.tsx (updated or new – add account select)
 'use client';
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import axios from 'axios';
-import { useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';  // ← Added for spinner
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
-export function CSVUpload() {
+interface Props {
+  accounts: any[];  // NEW: Receive accounts from parent
+}
+
+export function CSVUpload({ accounts }: Props) {
+  const [file, setFile] = useState<File | null>(null);
+  const [accountId, setAccountId] = useState<string | null>(null);  // NEW
   const [uploading, setUploading] = useState(false);
-  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      toast.error('Please select a CSV file');
-      return;
-    }
+  const handleUpload = async () => {
+    if (!file) return toast.error('Select a CSV file');
 
     setUploading(true);
-    const form = new FormData();
-    form.append('file', file);
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      const res = await axios.post(`${API_BASE}/transactions/upload`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      toast.success(`Uploaded! ${res.data.processed} transactions processed, ${res.data.new} new, ${res.data.skipped} skipped`);
-
-      // Immediate refetch
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['transactions'] }),
-        queryClient.invalidateQueries({ queryKey: ['transactionSummary'] }),
-      ]);
+      const { data } = await axios.post(
+        `${API_BASE}/transactions/upload?account_id=${accountId || ''}`,  // NEW: Pass account_id
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      toast.success(`Uploaded: ${data.new} new, ${data.duplicates} duplicates, ${data.categorized} categorized`);
+      setOpen(false);
+      // Refetch transactions/queryClient.invalidateQueries(['transactions']);
     } catch (err: any) {
-      const message = err.response?.data?.detail || err.message || 'Unknown error';
-      toast.error(`Upload failed: ${message}`);
-      console.error('Upload error:', err);
+      toast.error(err.response?.data?.detail || 'Upload failed');
     } finally {
       setUploading(false);
     }
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Upload Bank Transactions (CSV)</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {uploading ? (
-          <div className="flex flex-col items-center justify-center py-8 space-y-4">
-            <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-            <p className="text-sm text-muted-foreground">Uploading and categorizing...</p>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline">Upload CSV</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Upload Transactions CSV</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div>
+            <Label>CSV File</Label>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="mt-1 block w-full border rounded p-2"
+            />
           </div>
-        ) : (
-          <>
-            <div className="flex items-center gap-4">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700"
-              />
-            </div>
-            <p className="text-sm text-muted-foreground mt-4">
-              Upload your checking account CSV. AI will automatically categorize transactions.
-            </p>
-          </>
-        )}
-      </CardContent>
-    </Card>
+          <div>  {/* NEW: Account select */}
+            <Label>Assign Account (optional)</Label>
+            <Select value={accountId || ''} onValueChange={setAccountId}>
+              <SelectTrigger>
+                <SelectValue placeholder="No account" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((acc: any) => (
+                  <SelectItem key={acc.id} value={acc.id.toString()}>
+                    {acc.name} ({acc.type || 'custom'})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={handleUpload} disabled={uploading}>
+            {uploading ? 'Uploading...' : 'Upload'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

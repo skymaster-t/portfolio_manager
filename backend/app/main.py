@@ -32,11 +32,13 @@ from app.routers.holdings import router as holdings_router
 from app.routers.portfolios import router as portfolios_router
 from app.routers.budget import router as budget_router
 from app.routers.transactions import router as transactions_router
+from app.routers.accounts import router as accounts_router
 
 app.include_router(holdings_router)
 app.include_router(portfolios_router)
 app.include_router(budget_router)
 app.include_router(transactions_router)
+app.include_router(accounts_router)
 app.include_router(debug_router, prefix="/debug")
 
 # Existing CORS middleware (kept unchanged)

@@ -5,10 +5,9 @@ import { useState } from 'react';
 import axios from 'axios';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { useBudgetSummary, useBudgetItems, useAllHoldings, useCategories, useTransactionSummary } from '@/lib/queries';
+import { useBudgetSummary, useBudgetItems, useAllHoldings, useCategories, useTransactionSummary, useAccounts } from '@/lib/queries';
 import { formatCurrency } from '@/lib/utils';
 
-import { CSVUpload } from './components/CSVUpload';
 import { TransactionList } from './components/TransactionList';
 import { CategoryPieChart } from './components/CategoryPieChart';
 import { CategoryManager } from './components/CategoryManager';
@@ -40,6 +39,7 @@ export default function BudgetPage() {
   const { data: allHoldings = [] } = useAllHoldings();
   const { data: categories = [] } = useCategories();
   const { data: transactionSummary = { income: [], expense: [] } } = useTransactionSummary();
+  const { data: accounts = [] } = useAccounts();
 
   const incomeCategories = categories.filter((c: any) => c.type === 'income');
   const expenseCategories = categories.filter((c: any) => c.type === 'expense');
@@ -250,7 +250,7 @@ export default function BudgetPage() {
         <CategoryPieChart data={transactionSummary.expense} title="Expense Breakdown" type="expense" />
       </div>
 
-      <TransactionList />
+      <TransactionList accounts={accounts} />
 
       <DividendBreakdownCard
         summary={safeSummary}

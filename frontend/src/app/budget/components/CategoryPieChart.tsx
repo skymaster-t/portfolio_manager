@@ -8,13 +8,8 @@ import { formatCurrency } from '@/lib/utils';
 
 const COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#a855f7', '#ec4899', '#14b8a6', '#6366f1', '#f43f5e'];
 
-interface Props {
-  data: { category: string; total: number }[];
-  title: string;
-  type: 'income' | 'expense';
-}
+const NEON_RED = '#FF4500';  // Neon red (orangered for vibrant neon feel)
 
-const NEON_YELLOW = '#FFFF00';
 const OTHER_THRESHOLD = 100; // $100
 
 const renderActiveShape = (props: any) => {
@@ -40,7 +35,7 @@ const renderActiveShape = (props: any) => {
         outerRadius={outerRadius + 6}
         startAngle={startAngle}
         endAngle={endAngle}
-        fill={NEON_YELLOW}
+        fill={NEON_RED}
         filter="url(#neonGlowMedium)"
       />
       <Sector
@@ -55,6 +50,12 @@ const renderActiveShape = (props: any) => {
     </g>
   );
 };
+
+interface Props {
+  data: { category: string; total: number }[];
+  title: string;
+  type: 'income' | 'expense';
+}
 
 export function CategoryPieChart({ data, title, type }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
@@ -95,32 +96,37 @@ export function CategoryPieChart({ data, title, type }: Props) {
     }
 
     // Recalculate percentages based on what’s actually shown in the pie
-    const totalSum = result.reduce((sum, d) => sum + d.value, 0);
-    return result.map(item => ({
-      ...item,
-      percentage: totalSum > 0 ? (item.value / totalSum) * 100 : 0,
-    }));
+    const totalSum = result.reduce((sum, item) => sum + item.value, 0);
+    result.forEach(item => {
+      item.percentage = (item.value / totalSum) * 100;
+    });
+
+    return result;
   })();
 
   // ────────────────────────────────────────────────
-  // 4. Legend uses FULL sorted list (no grouping)
+  // 4. Full legend data (always shows all items, even small ones)
   // ────────────────────────────────────────────────
-  const legendData = sortedBase.map(item => ({
-    ...item,
-    // percentage not shown in legend for cleanliness
-  }));
+  const legendData = (() => {
+    const totalSum = baseData.reduce((sum, item) => sum + item.value, 0);
+    return sortedBase.map(item => ({
+      name: item.category,
+      value: item.value,
+      percentage: (item.value / totalSum) * 100,
+    }));
+  })();
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
-      const entry = payload[0];
+      const entry = payload[0].payload;
       return (
-        <div className="bg-background border border-border rounded-md p-3 shadow-lg text-sm min-w-[160px]">
-          <p className="font-semibold text-foreground">{entry.name}</p>
-          <p className="text-muted-foreground font-medium">
+        <div className="bg-background/95 border border-border rounded-lg p-3 shadow-lg min-w-[200px] text-sm">
+          <p className="font-semibold">{entry.name}</p>
+          <p className="text-muted-foreground mt-1">
             {formatCurrency(entry.value)}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {entry.payload.percentage?.toFixed(1)}%
+          <p className="text-muted-foreground mt-1">
+            {entry.percentage?.toFixed(1)}%
           </p>
         </div>
       );
@@ -170,7 +176,7 @@ export function CategoryPieChart({ data, title, type }: Props) {
                   <feColorMatrix
                     in="blur"
                     mode="matrix"
-                    values="0 0 0 0 1   0 0 0 0 1   0 0 0 0 0   0 0 0 0.85 0"
+                    values="1 0 0 0 0   0 0 0 0 0   0 0 0 0 0   0 0 0 0.85 0"  // Adjusted for red glow
                     result="glow"
                   />
                   <feComposite in="SourceGraphic" in2="glow" operator="over" />

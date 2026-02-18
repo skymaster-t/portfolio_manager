@@ -1,9 +1,9 @@
 // src/app/budget/components/TransactionList.tsx
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { format, isWithinInterval, startOfMonth, endOfMonth, subDays, subMonths, startOfYear } from 'date-fns';
-import { CalendarIcon, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { format, isWithinInterval, startOfMonth, endOfMonth, subDays, subMonths, startOfYear, endOfDay } from 'date-fns';
+import { CalendarIcon, ChevronRight, Loader2 } from 'lucide-react';
 
 import { useTransactions, useCategories } from '@/lib/queries';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -20,6 +20,9 @@ import { DateRange } from 'react-day-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
@@ -36,12 +39,16 @@ const RANGE_LABELS: Record<RangeOption, string> = {
   custom: 'Custom Range',
 };
 
-export function TransactionList() {
+interface TransactionListProps {
+  accounts: any[];
+}
+
+export function TransactionList({ accounts }: TransactionListProps) {
   const { data: transactions = [] } = useTransactions();
   const { data: categories = [] } = useCategories();
   const queryClient = useQueryClient();
 
-  // Persist range in localStorage
+  // Range persistence
   const [rangeOption, setRangeOption] = useState<RangeOption>(() => {
     const saved = localStorage.getItem('transactionRangeOption');
     return (saved as RangeOption) || 'thisMonth';
@@ -55,6 +62,15 @@ export function TransactionList() {
     };
   });
 
+  // Account filter (-1 = All)
+  const [selectedAccountId, setSelectedAccountId] = useState<number>(-1);
+
+  // Upload dialog state
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploadAccountId, setUploadAccountId] = useState<number | null>(null);
+  const [uploading, setUploading] = useState(false);
+
   useEffect(() => {
     localStorage.setItem('transactionRangeOption', rangeOption);
   }, [rangeOption]);
@@ -65,43 +81,98 @@ export function TransactionList() {
     }
   }, [customRange, rangeOption]);
 
-  // Compute effective date range
+  // Effective date range with better partial handling
   const effectiveRange = useMemo((): DateRange => {
     const today = new Date();
-
+    let from: Date | undefined = undefined;
+    let to: Date | undefined = undefined;
+  
     switch (rangeOption) {
       case 'last7':
-        return { from: subDays(today, 7), to: today };
+        from = subDays(today, 7);
+        to = today;
+        break;
       case 'last30':
-        return { from: subDays(today, 30), to: today };
+        from = subDays(today, 30);
+        to = today;
+        break;
       case 'thisMonth':
-        return { from: startOfMonth(today), to: today };
+        from = startOfMonth(today);
+        to = today;
+        break;
       case 'lastMonth':
         const lastMonth = subMonths(today, 1);
-        return { from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) };
+        from = startOfMonth(lastMonth);
+        to = endOfMonth(lastMonth);
+        break;
       case 'thisYear':
-        return { from: startOfYear(today), to: today };
+        from = startOfYear(today);
+        to = today;
+        break;
       case 'custom':
-        return customRange || { from: undefined, to: undefined };
+        if (customRange?.from || customRange?.to) {
+          from = customRange.from ? new Date(customRange.from) : undefined;
+          to = customRange.to ? new Date(customRange.to) : undefined;
+  
+          // Auto-fill missing end if only start is selected
+          if (from && !to) {
+            to = today;
+          }
+          // Auto-fill missing start if only end is selected
+          else if (!from && to) {
+            from = subDays(to, 30); // default 30 days back
+          }
+        }
+        break;
       default:
-        return { from: undefined, to: undefined };
+        // 'all' or unknown → no filter
+        break;
     }
+  
+    // Normalize dates safely (clone & set time)
+    if (from) {
+      from = new Date(from); // clone to avoid mutating original
+      from.setHours(0, 0, 0, 0); // start of day
+    }
+    if (to) {
+      to = endOfDay(new Date(to)); // end of day inclusive
+    }
+  
+    return { from, to };
   }, [rangeOption, customRange]);
 
-  // Filter transactions
+  // Filtered transactions – handle partial ranges
   const filteredTransactions = useMemo(() => {
-    if (!effectiveRange.from || !effectiveRange.to) return transactions;
-
-    return transactions.filter((t: any) => {
-      const txDate = new Date(t.date);
-      return isWithinInterval(txDate, {
-        start: effectiveRange.from!,
-        end: effectiveRange.to!,
+    let filtered = transactions || [];
+  
+    const { from, to } = effectiveRange;
+  
+    if (from || to) {
+      filtered = filtered.filter((t: any) => {
+        const txDate = new Date(t.date);
+        txDate.setHours(0, 0, 0, 0); // normalize tx date to start of day
+  
+        let inRange = true;
+  
+        if (from) {
+          inRange = inRange && txDate >= from;
+        }
+        if (to) {
+          inRange = inRange && txDate <= to;
+        }
+  
+        return inRange;
       });
-    });
-  }, [transactions, effectiveRange]);
+    }
+  
+    if (selectedAccountId !== -1) {
+      filtered = filtered.filter((t: any) => t.account_id === selectedAccountId);
+    }
+  
+    return filtered;
+  }, [transactions, effectiveRange, selectedAccountId]);
 
-  // Calculate totals for range
+  // Range totals
   const rangeTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
@@ -114,7 +185,7 @@ export function TransactionList() {
     return { income, expense, net: income - expense };
   }, [filteredTransactions]);
 
-  // Group filtered transactions by category (alphabetical)
+  // Grouped by category
   const grouped = useMemo(() => {
     const groups = new Map<number, any[]>();
     filteredTransactions.forEach((t: any) => {
@@ -126,7 +197,6 @@ export function TransactionList() {
     return sortedCategories.filter(c => groups.has(c.id));
   }, [filteredTransactions, categories]);
 
-  // Track expanded categories
   const [expandedCategories, setExpandedCategories] = useState<Set<number>>(new Set());
 
   const toggleCategory = (categoryId: number) => {
@@ -140,210 +210,163 @@ export function TransactionList() {
 
   const handleCategoryChange = async (transactionId: number, newCategoryId: number) => {
     try {
-      await axios.patch(`${API_BASE}/transactions/${transactionId}`, {
-        category_id: newCategoryId,
-      });
-
-      await queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      await queryClient.invalidateQueries({ queryKey: ['transactionSummary'] });
-
-      toast.success("Category updated");
+      await axios.patch(`${API_BASE}/transactions/${transactionId}`, { category_id: newCategoryId });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      toast.success('Category updated');
     } catch (err: any) {
       toast.error(`Failed: ${err.response?.data?.detail || 'Unknown error'}`);
     }
   };
 
-  // Format range for display
-  const rangeLabel = useMemo(() => {
-    if (!effectiveRange.from) return "All Time";
-    if (!effectiveRange.to) return format(effectiveRange.from, "MMMM yyyy");
-    return `${format(effectiveRange.from, "MMM d, yyyy")} – ${format(effectiveRange.to, "MMM d, yyyy")}`;
-  }, [effectiveRange]);
+  const handleAccountChange = async (transactionId: number, newAccountId: number) => {
+    try {
+      await axios.patch(`${API_BASE}/transactions/${transactionId}`, { account_id: newAccountId });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      toast.success('Account updated');
+    } catch (err: any) {
+      toast.error(`Failed: ${err.response?.data?.detail || 'Unknown error'}`);
+    }
+  };
 
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uniqueAccounts = useMemo(() => {
+    const accMap = new Map(accounts.map(acc => [acc.id, acc]));
+    return Array.from(
+      new Set(transactions.map((t: any) => t.account_id).filter(id => id !== null))
+    )
+      .map(id => accMap.get(id))
+      .filter(Boolean);
+  }, [transactions, accounts]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-  
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      toast.error('Please select a CSV file');
+  // Upload logic
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.[0]) setFile(e.target.files[0]);
+  };
+
+  const handleUpload = async () => {
+    if (!file) {
+      toast.error('Please select a file');
       return;
     }
-  
+    if (!uploadAccountId) {
+      toast.error('Please select an account');
+      return;
+    }
+
+    setUploadOpen(false);
     setUploading(true);
-    const form = new FormData();
-    form.append('file', file);
-  
+
+    const formData = new FormData();
+    formData.append('file', file);
+
     try {
-      const res = await axios.post(`${API_BASE}/transactions/upload`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      toast.success(`Uploaded! ${res.data.processed} transactions processed, ${res.data.new} new, ${res.data.skipped} skipped`);
-  
-      // Immediate refetch
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['transactions'] }),
-        queryClient.invalidateQueries({ queryKey: ['transactionSummary'] }),
-      ]);
+      const res = await axios.post(
+        `${API_BASE}/transactions/upload?account_id=${uploadAccountId}`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      toast.success(`Uploaded: ${res.data.new} new transactions`);
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
     } catch (err: any) {
       toast.error(`Upload failed: ${err.response?.data?.detail || 'Unknown error'}`);
     } finally {
       setUploading(false);
+      setFile(null);
+      setUploadAccountId(null);
     }
   };
 
   return (
     <TooltipProvider>
-      <Card className="border border-border/60 shadow-sm rounded-xl overflow-hidden">
-        <CardHeader className="py-4 px-6 border-b bg-gradient-to-r from-background via-muted/30 to-background">
-          <div className="flex justify-between items-center">
-            <CardTitle className="text-xl font-semibold tracking-tight">Transactions</CardTitle>
+      <Card className="shadow-lg rounded-xl overflow-hidden">
+        <CardHeader className="p-4 bg-gradient-to-r from-primary/5 to-primary/10">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <CardTitle className="text-xl font-bold">Transactions</CardTitle>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Select value={rangeOption} onValueChange={(v: RangeOption) => setRangeOption(v)}>
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(RANGE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={selectedAccountId.toString()}
+                onValueChange={(v) => setSelectedAccountId(parseInt(v))}
+              >
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue placeholder="Filter by Account" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="-1">All Accounts</SelectItem>
+                  {uniqueAccounts.map((acc: any) => (
+                    <SelectItem key={acc.id} value={acc.id.toString()}>
+                      {acc.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {rangeOption === 'custom' && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 px-2">
+                      <CalendarIcon className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="range"
+                      selected={customRange}
+                      onSelect={(newRange) => {
+                        if (newRange?.from && !newRange.to) {
+                          setCustomRange({ from: newRange.from, to: new Date() });
+                        } else {
+                          setCustomRange(newRange);
+                        }
+                      }}
+                      initialFocus
+                      className={cn(
+                        "w-full rounded-md",
+                        // Compact, no overflow styles
+                        "[&_.rdp-month]:p-0",
+                        "[&_.rdp-day_button]:h-9 [&_.rdp-day_button]:w-9 [&_.rdp-day_button]:text-sm [&_.rdp-day_button]:font-medium",
+                        "[&_.rdp-caption_label]:text-base [&_.rdp-caption_label]:font-semibold [&_.rdp-caption]:pb-2",
+                        "[&_.rdp-nav_button]:h-8 [&_.rdp-nav_button]:w-8 [&_.rdp-nav]:justify-between [&_.rdp-nav]:px-2",
+                        "[&_.rdp-weekday]:text-xs [&_.rdp-weekday]:font-medium [&_.rdp-weekday]:text-muted-foreground",
+                        // Selected/today overrides
+                        "[&_.rdp-day_selected]:!bg-primary [&_.rdp-day_selected]:!text-white [&_.rdp-day_selected]:!rounded-lg [&_.rdp-day_selected]:!font-semibold",
+                        "[&_.rdp-day_today]:!border-2 [&_.rdp-day_today]:!border-primary/60 [&_.rdp-day_today]:!rounded-lg [&_.rdp-day_today]:!font-bold [&_.rdp-day_today]:!bg-primary/10",
+                        "[&_.rdp-day_range_middle]:!bg-primary/15 [&_.rdp-day_range_middle]:!text-foreground"
+                      )}
+                    />
+                  </PopoverContent>
+                </Popover>
+              )}
+
               {uploading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
-                  <span>Uploading...</span>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 rounded-md text-sm text-muted-foreground border border-border/50">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Uploading…</span>
                 </div>
               ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                  >
-                    Upload CSV
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    Bank transactions
-                  </span>
-
-                  {/* Hidden file input */}
-                  <input
-                    type="file"
-                    accept=".csv"
-                    ref={fileInputRef}
-                    onChange={handleUpload}
-                    disabled={uploading}
-                    className="hidden"
-                  />
-                </>
-              )}
-            </div>
-
-            {/* Modern date range picker */}
-            <div className="flex items-center gap-5">
-
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "h-10 min-w-[280px] px-4 text-sm font-medium justify-between rounded-lg",
-                      "border border-primary/30 hover:border-primary/50 focus:border-primary focus:ring-1 focus:ring-primary/20",
-                      "bg-background shadow-sm hover:shadow transition-all duration-200",
-                      !effectiveRange.from && "text-muted-foreground"
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <CalendarIcon className="h-4 w-4 text-primary/80" />
-                      <span className="truncate">{rangeLabel}</span>
-                    </div>
-                    <ChevronDown className="h-4 w-4 opacity-70 ml-2" />
-                  </Button>
-                </PopoverTrigger>
-
-                <PopoverContent 
-                  className="w-[280px] p-0 shadow-lg border border-border rounded-xl overflow-hidden" 
-                  align="end"
-                  sideOffset={8}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setUploadOpen(true)}
+                  disabled={uploading}
                 >
-                  {rangeOption === 'custom' && (
-                    <div className="p-2 bg-background">
-                      <Calendar
-                        initialFocus
-                        mode="range"
-                        defaultMonth={effectiveRange.from || new Date()}
-                        selected={customRange}
-                        onSelect={setCustomRange}
-                        numberOfMonths={1}
-                        className={cn(
-                          "w-full rounded-md",
-                          // Compact, no overflow styles
-                          "[&_.rdp-month]:p-0",
-                          "[&_.rdp-day_button]:h-9 [&_.rdp-day_button]:w-9 [&_.rdp-day_button]:text-sm [&_.rdp-day_button]:font-medium",
-                          "[&_.rdp-caption_label]:text-base [&_.rdp-caption_label]:font-semibold [&_.rdp-caption]:pb-2",
-                          "[&_.rdp-nav_button]:h-8 [&_.rdp-nav_button]:w-8 [&_.rdp-nav]:justify-between [&_.rdp-nav]:px-2",
-                          "[&_.rdp-weekday]:text-xs [&_.rdp-weekday]:font-medium [&_.rdp-weekday]:text-muted-foreground",
-                          // Selected/today overrides
-                          "[&_.rdp-day_selected]:!bg-primary [&_.rdp-day_selected]:!text-white [&_.rdp-day_selected]:!rounded-lg [&_.rdp-day_selected]:!font-semibold",
-                          "[&_.rdp-day_today]:!border-2 [&_.rdp-day_today]:!border-primary/60 [&_.rdp-day_today]:!rounded-lg [&_.rdp-day_today]:!font-bold [&_.rdp-day_today]:!bg-primary/10",
-                          "[&_.rdp-day_range_middle]:!bg-primary/15 [&_.rdp-day_range_middle]:!text-foreground"
-                        )}
-                      />
-                    </div>
-                  )}
+                  Upload CSV
+                </Button>
+              )}
 
-                  {/* Predefined ranges – bottom, separated */}
-                  <div className="p-3 border-t bg-muted/30 rounded-b-xl">
-                    <div className="max-h-[180px] overflow-y-auto px-1">
-                      <div className="grid grid-cols-2 gap-2">
-                        {/* Custom Range first */}
-                        <Button
-                          variant={rangeOption === 'custom' ? "default" : "outline"}
-                          size="sm"
-                          className="justify-start text-sm h-9 rounded-md"
-                          onClick={() => setRangeOption('custom')}
-                        >
-                          Custom Range
-                        </Button>
-
-                        {/* This Month second */}
-                        <Button
-                          variant={rangeOption === 'thisMonth' ? "default" : "outline"}
-                          size="sm"
-                          className="justify-start text-sm h-9 rounded-md"
-                          onClick={() => setRangeOption('thisMonth')}
-                        >
-                          This Month
-                        </Button>
-
-                        {/* Other presets */}
-                        {Object.entries(RANGE_LABELS)
-                          .filter(([key]) => key !== 'custom' && key !== 'thisMonth' && key !== 'all')
-                          .map(([key, label]) => (
-                            <Button
-                              key={key}
-                              variant={rangeOption === key ? "default" : "outline"}
-                              size="sm"
-                              className="justify-start text-sm h-9 rounded-md"
-                              onClick={() => setRangeOption(key as RangeOption)}
-                            >
-                              {label}
-                            </Button>
-                          ))}
-
-                        {/* All Time last */}
-                        <Button
-                          variant={rangeOption === 'all' ? "default" : "outline"}
-                          size="sm"
-                          className="justify-start text-sm h-9 rounded-md col-span-2 border-t mt-2 pt-3"
-                          onClick={() => setRangeOption('all')}
-                        >
-                          All Time
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-
-
-              {/* Totals – elegant pill */}
               <Badge
                 variant="outline"
                 className="px-5 py-2 text-sm font-medium rounded-full shadow-sm border-primary/30 bg-gradient-to-r from-background to-muted/20 transition-all duration-200 hover:shadow-md"
@@ -361,13 +384,12 @@ export function TransactionList() {
                   {formatCurrency(Math.abs(rangeTotals.net))}
                 </span>
               </Badge>
-
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="p-4">
-          <div className="max-h-[600px] overflow-y-auto"> {/* Fixed height + scroll for entire list */}
+          <div className="max-h-[600px] overflow-y-auto">
             <div className="space-y-4">
               {grouped.map((category: any) => {
                 const isExpanded = expandedCategories.has(category.id);
@@ -375,7 +397,6 @@ export function TransactionList() {
 
                 return (
                   <div key={category.id}>
-                    {/* Darker, compact category header */}
                     <button
                       onClick={() => toggleCategory(category.id)}
                       className="w-full flex items-center justify-between py-2.5 px-4 bg-muted/80 rounded-lg text-left hover:bg-muted/90 transition-colors"
@@ -419,6 +440,7 @@ export function TransactionList() {
                               <span className={`font-medium ${t.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 {formatCurrency(Math.abs(t.amount))}
                               </span>
+
                               <Select
                                 value={t.category_id.toString()}
                                 onValueChange={(v) => handleCategoryChange(t.id, parseInt(v))}
@@ -430,6 +452,22 @@ export function TransactionList() {
                                   {categories.map((c: any) => (
                                     <SelectItem key={c.id} value={c.id.toString()}>
                                       {c.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              <Select
+                                value={t.account_id?.toString() || ''}
+                                onValueChange={(v) => handleAccountChange(t.id, parseInt(v))}
+                              >
+                                <SelectTrigger className="w-40 h-7 text-xs rounded-md border-border/70">
+                                  <SelectValue placeholder="No Account" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-[240px] overflow-y-auto text-xs">
+                                  {accounts.map((acc: any) => (
+                                    <SelectItem key={acc.id} value={acc.id.toString()}>
+                                      {acc.name}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -446,6 +484,62 @@ export function TransactionList() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Upload CSV Dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload Transactions CSV</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="csv-file">Select CSV File</Label>
+              <Input
+                id="csv-file"
+                type="file"
+                accept=".csv"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="account-select">Select Account</Label>
+              <Select
+                onValueChange={(v) => setUploadAccountId(parseInt(v))}
+                value={uploadAccountId?.toString()}
+                disabled={uploading}
+              >
+                <SelectTrigger id="account-select">
+                  <SelectValue placeholder="Choose account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((acc: any) => (
+                    <SelectItem key={acc.id} value={acc.id.toString()}>
+                      {acc.name} {acc.type ? `(${acc.type})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Button
+              onClick={handleUpload}
+              disabled={uploading || !file || !uploadAccountId}
+              className="w-full"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                'Start Upload'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   );
 }

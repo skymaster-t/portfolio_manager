@@ -31,6 +31,7 @@ class User(Base):
     hashed_password = Column(String)
 
     portfolios = relationship("Portfolio", back_populates="user")
+    accounts = relationship("Account", back_populates="user")
 
 class Portfolio(Base):
     __tablename__ = "portfolios"
@@ -161,6 +162,21 @@ class Transaction(Base):
     original_description = Column(String)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     is_manual_override = Column(Boolean, default=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
 
     # Relationship back to Category
     category = relationship("Category", back_populates="transactions")
+    account = relationship("Account", back_populates="transactions")
+
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)  # e.g., "My RBC Checking"
+    type = Column(String, nullable=True)  # e.g., "checking", "savings", "credit_card" (optional for categorization)
+
+    user = relationship("User", back_populates="accounts")
+    transactions = relationship("Transaction", back_populates="account")
+
+    

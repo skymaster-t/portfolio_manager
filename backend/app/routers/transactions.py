@@ -1,19 +1,12 @@
-# backend/app/routers/transactions.py (full updated file – deduplication + flexible parsing)
-# - Deduplicates on date + description + amount
-# - Only new transactions sent to AI
-# - Returns detailed counts
-# - Production-ready: efficient query, clear response
-# - Preprocess descriptions: remove common leading phrases like "CONTACTLESS INTERAC PURCHASE"
-# - Now calls the new process_csv helper in /upload
-
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
+# backend/app/routers/transactions.py (updated – added account_id support)
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query  # NEW: Query for account_id
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, and_
 from app.database import get_db
-from app.models import Transaction, Category
+from app.models import Transaction, Category, Account
 from app.schemas import TransactionResponse, TransactionCreate, TransactionUpdate
 from app.agents.transaction_categorizer import categorize_transactions
-from typing import List
+from typing import List, Optional
 import pandas as pd
 from io import StringIO
 import logging
@@ -66,157 +59,249 @@ def detect_columns(df: pd.DataFrame):
 
     # ── Amount column(s) ────────────────────────────────────────────────────────
     # RBC uses CAD$ and USD$ columns
-    amount_keywords = ['amount', 'amt', 'transaction amount', 'value', 'cad$', 'usd$']
-    debit_keywords = ['debit', 'dr', 'withdrawal', 'out']
-    credit_keywords = ['credit', 'cr', 'deposit', 'in']
-
-    # Try single amount first
+    amount_keywords = [
+        'amount', 'amt', 'transaction amount', 'debit', 'credit', 'cad$', 'usd$',
+        'value', 'balance', 'dr/cr', 'debit/credit'
+    ]
+    debit_col = None
+    credit_col = None
+    single_amount = None
     for keyword in amount_keywords:
         for clean, orig in cols.items():
             if keyword in clean:
-                mapping['amount'] = orig
-                break
-        if 'amount' in mapping:
+                if 'debit' in clean:
+                    debit_col = orig
+                elif 'credit' in clean:
+                    credit_col = orig
+                elif 'cad$' in clean:
+                    mapping['amount'] = orig  # RBC CAD
+                else:
+                    single_amount = orig
+                if debit_col and credit_col:
+                    break
+        if debit_col and credit_col:
+            mapping['debit'] = debit_col
+            mapping['credit'] = credit_col
             break
-
-    # Fallback to debit/credit or currency split
-    if 'amount' not in mapping:
-        debit_col = None
-        credit_col = None
-        cad_col = None
-        usd_col = None
-
-        for clean, orig in cols.items():
-            if any(k in clean for k in debit_keywords):
-                debit_col = orig
-            if any(k in clean for k in credit_keywords):
-                credit_col = orig
-            if 'cad$' in clean or 'cad' in clean:
-                cad_col = orig
-            if 'usd$' in clean or 'usd' in clean:
-                usd_col = orig
-
-        if cad_col or usd_col:
-            # Prefer CAD if present, else USD
-            mapping['amount'] = cad_col or usd_col
-        elif debit_col and credit_col:
-            mapping['debit'] = debit_col
-            mapping['credit'] = credit_col
-        elif debit_col:
-            mapping['debit'] = debit_col
-        elif credit_col:
-            mapping['credit'] = credit_col
-
-    logger.info(f"Detected CSV columns: {mapping}")
-    logger.info(f"All raw columns: {list(df.columns)}")
-
-    # Validation
-    has_date = 'date' in mapping
-    has_desc = 'description' in mapping
-    has_amount = 'amount' in mapping or ('debit' in mapping or 'credit' in mapping)
-
-    if not (has_date and has_desc and has_amount):
-        missing = []
-        if not has_date: missing.append('date')
-        if not has_desc: missing.append('description')
-        if not has_amount: missing.append('amount/debit/credit')
-        raise HTTPException(
-            400,
-            f"CSV missing required columns: {', '.join(missing)}. "
-            f"Found columns: {list(df.columns)}. "
-            f"Detected: {mapping}"
-        )
+        if 'amount' in mapping or single_amount:
+            mapping['amount'] = mapping.get('amount') or single_amount
 
     return mapping
+
+def process_csv(file_content: str, db: Session, account_id: Optional[int] = None):
+    df = pd.read_csv(StringIO(file_content))
+    mapping = detect_columns(df)
+
+    required = ['date', 'description']
+    if 'amount' not in mapping and ('debit' not in mapping or 'credit' not in mapping):
+        required.append('amount')
+
+    missing = [f for f in required if f not in mapping]
+    if missing:
+        raise HTTPException(400, f"Missing columns: {', '.join(missing)}")
+
+    # Normalize dates
+    df[mapping['date']] = pd.to_datetime(df[mapping['date']], errors='coerce')
+    df = df.dropna(subset=[mapping['date']])
+
+    # Handle amounts
+    if 'amount' in mapping:
+        df['amount'] = pd.to_numeric(df[mapping['amount']], errors='coerce')
+    else:
+        df['debit'] = pd.to_numeric(df[mapping['debit']].fillna(0), errors='coerce')
+        df['credit'] = pd.to_numeric(df[mapping['credit']].fillna(0), errors='coerce')
+        df['amount'] = df['credit'] - df['debit']
+
+    df = df.dropna(subset=['amount'])
+
+    # ── Description column ──────────────────────────────────────────────────────
+    desc_col_1 = None
+    desc_col_2 = None
+
+    for col in df.columns:
+        clean_col = str(col).strip().lower()
+        if 'description 1' in clean_col or 'desc 1' in clean_col:
+            desc_col_1 = col
+        elif 'description 2' in clean_col or 'desc 2' in clean_col:
+            desc_col_2 = col
+        elif any(kw in clean_col for kw in ['description', 'desc', 'payee', 'merchant', 'memo', 'narration', 'particulars', 'remarks', 'transaction details']):
+            if not desc_col_1:  # prefer Description 1 over generic
+                desc_col_1 = col
+
+    if desc_col_1:
+        if desc_col_2:
+            df['description'] = (
+                df[desc_col_1].fillna('').astype(str) + ' ' +
+                df[desc_col_2].fillna('').astype(str)
+            ).str.strip()
+        else:
+            df['description'] = df[desc_col_1].astype(str).str.strip()
+    else:
+        raise HTTPException(400, "Could not detect a description column in CSV")
+
+    df['description'] = df['description'].str.strip()
+
+    # Deduplicate against DB (date + amount + normalized description)
+    existing = db.query(Transaction).filter(Transaction.user_id == 1).all()
+    existing_set = {
+        (t.date.date(), t.amount, normalize_vendor(t.description))
+        for t in existing
+    }
+
+    # Check duplicates using normalized key
+    new_transactions = []
+    for _, row in df.iterrows():
+        norm_desc = normalize_vendor(row['description'])
+        norm_date = row[mapping['date']].date()
+        norm_amount = round(row['amount'], 2)
+
+        exists = db.query(Transaction).filter(
+            Transaction.user_id == 1,
+            Transaction.date == norm_date,
+            Transaction.amount == norm_amount,
+            Transaction.description.ilike(f"%{norm_desc}%")   # ← more lenient match
+        ).first()
+
+        if not exists:
+            tx = {
+                'date': row[mapping['date']],
+                'description': row['description'].strip(),
+                'original_description': row.get('original_description', row['description']),
+                'amount': float(row['amount']),
+            }
+            if account_id is not None:
+                tx['account_id'] = account_id
+                logger.debug(f"Assigned account_id={account_id} to new tx: {tx['description'][:60]}...")
+            new_transactions.append(tx)
+
+    if not new_transactions:
+        logger.info("No new (non-duplicate) transactions found")
+        return []
+
+    # Attach account_type for the prompt
+    account_type = "unknown"
+    if account_id is not None:
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if account:
+            account_type = account.type or "unknown"
+            logger.info(f"Using account_type = '{account_type}' for {len(new_transactions)} new transactions")
+        else:
+            logger.warning(f"Account ID {account_id} not found - using 'unknown' type")
+
+    for tx in new_transactions:
+        tx['account_type'] = account_type
+
+    return new_transactions
     
-def clean_description(desc: str) -> str:
-    """Remove common leading bank phrases and extra spaces."""
-    desc = desc.strip()
+def normalize_vendor(description: str) -> str:
+    """
+    Normalize a transaction description for duplicate detection and comparison.
+    Removes noise, standardizes formatting, removes common prefixes, etc.
+    Returns an uppercase, simplified version suitable for matching.
+    """
+    if not description:
+        return ""
+
+    # 1. Convert to uppercase and collapse multiple spaces
+    desc = re.sub(r'\s+', ' ', description.strip().upper())
+
+    # 2. Remove special characters except alphanumeric, spaces, and basic punctuation we care about
+    desc = re.sub(r'[^A-Z0-9\s\-#&/]', '', desc)
+
+    # 3. Remove very common bank/processor prefixes (expand this list as needed)
     prefixes = [
-        "CONTACTLESS INTERAC PURCHASE",
-        "INTERAC PURCHASE",
-        "DEBIT PURCHASE",
-        "POS PURCHASE",
-        "PRE AUTHORIZED DEBIT",
-        "E-TRANSFER SENT",
-        "E-TRANSFER RECEIVED",
-        "INTERAC E-TRANSFER",
-        "ONLINE TRANSFER",
-        "WITHDRAWAL",
-        "DEPOSIT",
+        r'CONTACTLESS INTERAC PURCHASE -?',
+        r'POS PURCHASE -?',
+        r'DEBIT PURCHASE -?',
+        r'PRE-AUTHORIZED DEBIT -?',
     ]
-    for prefix in prefixes:
-        desc = re.sub(rf"^{prefix}\s*", "", desc, flags=re.IGNORECASE)
-    desc = re.sub(r"\s*-\s*", " ", desc)  # Remove " - " separators
-    desc = re.sub(r'\s+', ' ', desc)  # Normalize spaces
+
+    prefix_pattern = '|'.join(prefixes)
+    desc = re.sub(rf'^(?:{prefix_pattern})\s*', '', desc, flags=re.IGNORECASE)
+
+    # 4. Remove leading numbers (often card last-4 or reference numbers)
+    desc = re.sub(r'^\d{4}\s*', '', desc)           # 3422 
+    desc = re.sub(r'-\s*\d{4}$', '', desc)          # -3422 at end
+    desc = re.sub(r'#\d+\s*', '', desc)             # #117, #00025 etc.
+
+    # 5. Remove common trailing garbage (country codes, dates, etc.)
+    desc = re.sub(r'\s*(CA$|CAN$|CANADA$|\d{2}/\d{2}|\d{2}-\d{2})', '', desc, flags=re.IGNORECASE)
+
+    # 6. Final cleanup: remove any remaining leading/trailing dashes or spaces
+    desc = re.sub(r'^\s*[-–—]\s*', '', desc)        # remove leading -   or – or —
+    desc = re.sub(r'\s*[-–—]\s*$', '', desc)        # remove trailing - 
+
+    # 7. Return cleaned, normalized string
     return desc.strip()
 
-def normalize_vendor(desc: str) -> str:
-    """Extract core vendor name by removing numbers/codes (e.g., '7805 BAYVIEW COURT' → 'bayview court')"""
-    desc = re.sub(r'\d+\s*', '', desc)           # remove numbers like 7805
-    desc = re.sub(r'\s*[A-Z]\s*$', '', desc)     # remove trailing single letters like " C"
-    desc = re.sub(r'\s+', ' ', desc).strip()     # normalize spaces
-    return desc.lower()
+@router.post("/upload")
+async def upload_csv(
+    file: UploadFile = File(...),
+    account_id: Optional[int] = Query(None, description="Optional account ID to assign to all transactions"),  # NEW
+    db: Session = Depends(get_db)
+):
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(400, "Only CSV files supported")
 
-def process_csv(file: UploadFile, db: Session) -> dict:
-    content = file.file.read().decode('utf-8')
-    df = pd.read_csv(StringIO(content))
+    logger.info(f"Received upload - filename: {file.filename}, account_id from query: {account_id}")
 
-    mapping = detect_columns(df)
-    if not all(k in mapping for k in ['date', 'description', 'amount']):
-        raise HTTPException(400, "CSV must have date, description, and amount columns")
+    content = await file.read()
+    try:
+        new_transactions = process_csv(content.decode('utf-8'), db, account_id)  # NEW: Pass account_id
+    except UnicodeDecodeError:
+        # Fallback for Windows-1252 or other encodings
+        new_transactions = process_csv(content.decode('windows-1252', errors='ignore'), db, account_id)
 
-    df['date'] = pd.to_datetime(df[mapping['date']], errors='coerce')
-    df['description'] = df[mapping['description']].astype(str).apply(clean_description)
-    df['amount'] = pd.to_numeric(df[mapping['amount']], errors='coerce')
-    df = df.dropna(subset=['date', 'description', 'amount'])
+    if not new_transactions:
+        return {
+            "status": "success",
+            "message": "No new transactions found (all duplicates skipped)",
+            "new": 0,
+            "duplicates": 0,
+            "categorized": 0
+        }
 
-    # Dedup check
-    existing = db.execute(text("""
-        SELECT date, description, amount
-        FROM transactions WHERE user_id = 1
-    """)).fetchall()
-    existing_set = {(e.date, e.description, e.amount) for e in existing}
+    # Send to AI for categorization (only new ones)
+    categorized = categorize_transactions(new_transactions, user_id=1, db=db)
 
-    new_df = df[~df.apply(lambda r: (r.date, r.description, r.amount) in existing_set, axis=1)]
-
-    new_transactions = new_df.to_dict('records')
-    categorized = categorize_transactions(new_transactions, 1, db)
-
-    inserted = []
+    added_count = 0
     for t in categorized:
-        trans = Transaction(
+        new_t = Transaction(
             user_id=1,
             date=t['date'],
-            description=t['description'],  # cleaned version
+            description=t['description'],
+            original_description=t.get('original_description'),
             amount=t['amount'],
-            original_description=t.get('original_description', t['description']),
-            category_id=t['category_id']
+            category_id=t['category_id'],
+            account_id=t.get('account_id')  # NEW
         )
-        db.add(trans)
-        inserted.append(trans)
+        db.add(new_t)
+        added_count += 1
 
     db.commit()
 
     return {
-        "processed": len(df),
-        "new": len(new_df),
-        "skipped": len(df) - len(new_df),
-        "categorized": len(categorized)
+        "status": "success",
+        "new": added_count,
+        "duplicates": len(df) - added_count if 'df' in locals() else 0,
+        "categorized": added_count
     }
-
-@router.post("/upload")
-def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename.lower().endswith('.csv'):
-        raise HTTPException(400, "CSV file required")
-
-    results = process_csv(file, db)
-    return results
 
 @router.get("/", response_model=List[TransactionResponse])
 def get_transactions(db: Session = Depends(get_db)):
-    return db.query(Transaction).filter(Transaction.user_id == 1).order_by(Transaction.date.desc()).all()
+    transactions = (
+        db.query(Transaction)
+        .filter(Transaction.user_id == 1)
+        .options(
+            joinedload(Transaction.category),   # eager load category
+            joinedload(Transaction.account)     # eager load account if used
+        )
+        .order_by(Transaction.date.desc())
+        .all()
+    )
 
+    return transactions
+    
 @router.patch("/{transaction_id}", response_model=TransactionResponse)
 def update_transaction(
     transaction_id: int,
@@ -233,6 +318,8 @@ def update_transaction(
 
     old_category_id = t.category_id
     t.category_id = update.category_id
+    if update.account_id is not None:  # NEW: Update account if provided
+        t.account_id = update.account_id
     t.is_manual_override = True
 
     db.commit()
@@ -288,4 +375,3 @@ def get_transaction_summary(db: Session = Depends(get_db)):
     expense = [{"category": r.name, "total": abs(r.total)} for r in results if r.type == 'expense' and r.total < 0]
 
     return {"income": income, "expense": expense}
-

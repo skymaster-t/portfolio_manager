@@ -1,5 +1,5 @@
 // src/lib/queries.ts (new central file: shared React Query hooks & keys for all global/portfolio data – ensures single fetch + shared cache across pages)
-import { useQuery, UseQueryOptions } from '@tanstack/react-query';
+import { useQuery, UseQueryOptions, useMutation, UseQueryResult } from '@tanstack/react-query';
 import axios from 'axios';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
@@ -130,5 +130,15 @@ export function useTransactionSummary() {
     queryFn: () => axios.get(`${API_BASE}/transactions/summary`).then(res => res.data),
     staleTime: 1000 * 60 * 60 * 24,
     ...commonOptions,
+  });
+}
+
+export function useAccounts(): UseQueryResult<any[], unknown> {
+  return useQuery({
+    queryKey: ['accounts'],
+    queryFn: async () => {
+      const { data } = await axios.get(`${API_BASE}/accounts`);
+      return data;
+    },
   });
 }
