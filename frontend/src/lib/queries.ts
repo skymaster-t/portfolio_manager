@@ -106,3 +106,29 @@ export function useBudgetItems(options?: UseQueryOptions<any[], Error>) {
     ...options,
   });
 }
+
+export function useCategories() {
+  return useQuery({
+    queryKey: ['categories'],
+    queryFn: () => axios.get(`${API_BASE}/budget/categories`).then(res => res.data),
+    ...commonOptions,
+  });
+}
+
+export function useTransactions() {
+  return useQuery({
+    queryKey: ['transactions'],
+    queryFn: () => axios.get(`${API_BASE}/transactions`).then(res => res.data),
+    staleTime: 1000 * 60 * 60 * 24,  // 24 hours – transactions don't change real-time
+    ...commonOptions,
+  });
+}
+
+export function useTransactionSummary() {
+  return useQuery({
+    queryKey: ['transactionSummary'],
+    queryFn: () => axios.get(`${API_BASE}/transactions/summary`).then(res => res.data),
+    staleTime: 1000 * 60 * 60 * 24,
+    ...commonOptions,
+  });
+}

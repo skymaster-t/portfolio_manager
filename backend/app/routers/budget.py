@@ -7,10 +7,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import BudgetItem, Holding, Currency
+from app.models import BudgetItem, Holding, Currency, Category, Transaction
 from app.schemas import (
     BudgetItemCreate, BudgetItemResponse, BudgetSummaryResponse,
-    DividendBreakdownItem, ItemType
+    DividendBreakdownItem, ItemType,
+    CategoryCreate, CategoryResponse
 )
 from app.main import r
 from typing import List
@@ -31,7 +32,7 @@ def create_item(item: BudgetItemCreate, db: Session = Depends(get_db)):
         item_type=item.item_type.value,
         name=item.name,
         amount_monthly=item.amount_monthly,
-        category=item.category,
+        category_id=item.category_id,
     )
     db.add(new_item)
     db.commit()
@@ -113,3 +114,80 @@ def get_summary(db: Session = Depends(get_db)):
         income_items=[i for i in items if i.item_type == "income"],
         expense_items=[i for i in items if i.item_type == "expense"],
     )
+    
+@router.get("/categories", response_model=List[CategoryResponse])
+def get_categories(db: Session = Depends(get_db)):
+    return db.query(Category).filter(Category.user_id == USER_ID).all()
+
+@router.post("/categories", response_model=CategoryResponse)
+def create_category(cat: CategoryCreate, db: Session = Depends(get_db)):
+    exists = db.query(Category).filter(
+        Category.user_id == USER_ID,
+        Category.name == cat.name
+    ).first()
+    if exists:
+        raise HTTPException(400, "Category already exists")
+
+    new_cat = Category(
+        user_id=USER_ID,
+        name=cat.name,
+        type=cat.type,
+        is_custom=True
+    )
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.patch("/categories/{category_id}", response_model=CategoryResponse)
+def update_category(category_id: int, update: CategoryCreate, db: Session = Depends(get_db)):
+    cat = db.query(Category).filter(Category.id == category_id, Category.user_id == USER_ID).first()
+    if not cat:
+        raise HTTPException(404, "Category not found")
+    if not cat.is_custom:
+        raise HTTPException(400, "Cannot edit system category")
+
+    # Update name/type
+    cat.name = update.name
+    cat.type = update.type
+
+    # Cascade to transactions and budget_items
+    db.query(Transaction).filter(Transaction.category_id == category_id).update({
+        Transaction.category_id: category_id  # Already correct, but ensures consistency
+    })
+    db.query(BudgetItem).filter(BudgetItem.category_id == category_id).update({
+        BudgetItem.category_id: category_id
+    })
+
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+@router.delete("/categories/{category_id}")
+def delete_category(category_id: int, db: Session = Depends(get_db)):
+    cat = db.query(Category).filter(Category.id == category_id, Category.user_id == USER_ID).first()
+    if not cat:
+        raise HTTPException(404, "Category not found")
+    if not cat.is_custom:
+        raise HTTPException(400, "Cannot delete system category")
+
+    # Find "Other" fallback
+    fallback_name = "Other Income" if cat.type == "income" else "Other Expense"
+    fallback = db.query(Category).filter(
+        Category.user_id == USER_ID,
+        Category.name == fallback_name
+    ).first()
+    if not fallback:
+        raise HTTPException(500, f"Fallback category '{fallback_name}' not found")
+
+    # Cascade move
+    db.query(Transaction).filter(Transaction.category_id == category_id).update({
+        Transaction.category_id: fallback.id
+    })
+    db.query(BudgetItem).filter(BudgetItem.category_id == category_id).update({
+        BudgetItem.category_id: fallback.id
+    })
+
+    db.delete(cat)
+    db.commit()
+    return {"status": "deleted"}

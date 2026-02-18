@@ -155,6 +155,28 @@ class GlobalSectorResponse(BaseModel):
 class ReorderRequest(BaseModel):
     order: List[int]
 
+class CategoryCreate(BaseModel):
+    name: str
+    type: str  # 'income' or 'expense'
+
+    class Config:
+        from_attributes = True
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+    type: str
+    is_custom: bool
+
+    class Config:
+        from_attributes = True
+
+class TransactionCreate(BaseModel):
+    date: datetime
+    description: str
+    amount: float
+    category_id: int
+
 class ItemType(str, Enum):
     income = "income"
     expense = "expense"
@@ -163,10 +185,16 @@ class BudgetItemCreate(BaseModel):
     item_type: ItemType
     name: str
     amount_monthly: float
-    category: Optional[str] = None
+    category_id: int
 
-class BudgetItemResponse(BudgetItemCreate):
+class BudgetItemResponse(BaseModel):
     id: int
+    user_id: int
+    item_type: str
+    name: str
+    amount_monthly: float
+    category_id: int
+    category: CategoryResponse
 
     class Config:
         from_attributes = True
@@ -193,3 +221,23 @@ class BudgetSummaryResponse(BaseModel):
     net_surplus_monthly: float
     income_items: List[BudgetItemResponse]
     expense_items: List[BudgetItemResponse]
+
+class TransactionCreate(BaseModel):
+    date: datetime
+    description: str
+    amount: float
+    category_id: int
+
+class TransactionResponse(TransactionCreate):
+    id: int
+    user_id: int
+    original_description: Optional[str] = None
+    is_manual_override: bool = False
+    category: CategoryResponse
+
+    class Config:
+        from_attributes = True
+
+class TransactionUpdate(BaseModel):
+    category_id: int
+    

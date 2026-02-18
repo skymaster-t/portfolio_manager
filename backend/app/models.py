@@ -124,6 +124,19 @@ class SymbolSectorCache(Base):
     class Config:
         from_attributes = True
 
+class Category(Base):
+    __tablename__ = "categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    type = Column(String, nullable=False)  # 'income' or 'expense'
+    is_custom = Column(Boolean, default=False)
+
+    # One-to-many with BudgetItem and Transaction
+    budget_items = relationship("BudgetItem", back_populates="category")
+    transactions = relationship("Transaction", back_populates="category")
+
 class BudgetItem(Base):
     __tablename__ = "budget_items"
 
@@ -132,5 +145,22 @@ class BudgetItem(Base):
     item_type = Column(String, nullable=False)  # 'income' or 'expense'
     name = Column(String, nullable=False)
     amount_monthly = Column(Float, nullable=False)
-    category = Column(String, nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
 
+    # Relationship back to Category
+    category = relationship("Category", back_populates="budget_items")
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    date = Column(DateTime, nullable=False)
+    description = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    original_description = Column(String)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    is_manual_override = Column(Boolean, default=False)
+
+    # Relationship back to Category
+    category = relationship("Category", back_populates="transactions")
