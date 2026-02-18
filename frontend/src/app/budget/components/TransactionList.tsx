@@ -3,7 +3,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { format, isWithinInterval, startOfMonth, endOfMonth, subDays, subMonths, startOfYear, endOfDay } from 'date-fns';
-import { CalendarIcon, ChevronRight, Loader2 } from 'lucide-react';
+import { CalendarIcon, ChevronRight, Loader2, Search } from 'lucide-react';
 
 import { useTransactions, useCategories } from '@/lib/queries';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { DateRange } from 'react-day-picker';
@@ -21,7 +22,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
@@ -65,6 +65,9 @@ export function TransactionList({ accounts }: TransactionListProps) {
   // Account filter (-1 = All)
   const [selectedAccountId, setSelectedAccountId] = useState<number>(-1);
 
+  // NEW: Search filter
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Upload dialog state
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -84,93 +87,83 @@ export function TransactionList({ accounts }: TransactionListProps) {
   // Effective date range with better partial handling
   const effectiveRange = useMemo((): DateRange => {
     const today = new Date();
-    let from: Date | undefined = undefined;
-    let to: Date | undefined = undefined;
-  
+    let range: DateRange = { from: undefined, to: undefined };
+
     switch (rangeOption) {
       case 'last7':
-        from = subDays(today, 7);
-        to = today;
+        range = { from: subDays(today, 7), to: today };
         break;
       case 'last30':
-        from = subDays(today, 30);
-        to = today;
+        range = { from: subDays(today, 30), to: today };
         break;
       case 'thisMonth':
-        from = startOfMonth(today);
-        to = today;
+        range = { from: startOfMonth(today), to: today };
         break;
       case 'lastMonth':
         const lastMonth = subMonths(today, 1);
-        from = startOfMonth(lastMonth);
-        to = endOfMonth(lastMonth);
+        range = { from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) };
         break;
       case 'thisYear':
-        from = startOfYear(today);
-        to = today;
+        range = { from: startOfYear(today), to: today };
         break;
       case 'custom':
-        if (customRange?.from || customRange?.to) {
-          from = customRange.from ? new Date(customRange.from) : undefined;
-          to = customRange.to ? new Date(customRange.to) : undefined;
-  
-          // Auto-fill missing end if only start is selected
-          if (from && !to) {
-            to = today;
-          }
-          // Auto-fill missing start if only end is selected
-          else if (!from && to) {
-            from = subDays(to, 30); // default 30 days back
-          }
+        range = customRange || { from: undefined, to: undefined };
+        if (range.from && !range.to) {
+          range.to = today;
+        } else if (!range.from && range.to) {
+          range.from = subDays(range.to, 30);
         }
         break;
       default:
-        // 'all' or unknown → no filter
         break;
     }
-  
-    // Normalize dates safely (clone & set time)
-    if (from) {
-      from = new Date(from); // clone to avoid mutating original
-      from.setHours(0, 0, 0, 0); // start of day
+
+    if (range.from) {
+      const fromClone = new Date(range.from);
+      fromClone.setHours(0, 0, 0, 0);
+      range.from = fromClone;
     }
-    if (to) {
-      to = endOfDay(new Date(to)); // end of day inclusive
+    if (range.to) {
+      range.to = endOfDay(range.to);
     }
-  
-    return { from, to };
+
+    return range;
   }, [rangeOption, customRange]);
 
-  // Filtered transactions – handle partial ranges
+  // Filtered transactions – now with search
   const filteredTransactions = useMemo(() => {
     let filtered = transactions || [];
-  
+
     const { from, to } = effectiveRange;
-  
+
     if (from || to) {
       filtered = filtered.filter((t: any) => {
         const txDate = new Date(t.date);
-        txDate.setHours(0, 0, 0, 0); // normalize tx date to start of day
-  
+        txDate.setHours(0, 0, 0, 0);
+
         let inRange = true;
-  
-        if (from) {
-          inRange = inRange && txDate >= from;
-        }
-        if (to) {
-          inRange = inRange && txDate <= to;
-        }
-  
+
+        if (from) inRange = inRange && txDate >= from;
+        if (to) inRange = inRange && txDate <= to;
+
         return inRange;
       });
     }
-  
+
     if (selectedAccountId !== -1) {
       filtered = filtered.filter((t: any) => t.account_id === selectedAccountId);
     }
-  
+
+    // NEW: Search filter on description (case-insensitive)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter((t: any) =>
+        t.description?.toLowerCase().includes(query)
+      );
+    }
+
     return filtered;
-  }, [transactions, effectiveRange, selectedAccountId]);
+  }, [transactions, effectiveRange, selectedAccountId, searchQuery]);
 
   // Range totals
   const rangeTotals = useMemo(() => {
@@ -334,13 +327,11 @@ export function TransactionList({ accounts }: TransactionListProps) {
                       initialFocus
                       className={cn(
                         "w-full rounded-md",
-                        // Compact, no overflow styles
                         "[&_.rdp-month]:p-0",
                         "[&_.rdp-day_button]:h-9 [&_.rdp-day_button]:w-9 [&_.rdp-day_button]:text-sm [&_.rdp-day_button]:font-medium",
                         "[&_.rdp-caption_label]:text-base [&_.rdp-caption_label]:font-semibold [&_.rdp-caption]:pb-2",
                         "[&_.rdp-nav_button]:h-8 [&_.rdp-nav_button]:w-8 [&_.rdp-nav]:justify-between [&_.rdp-nav]:px-2",
                         "[&_.rdp-weekday]:text-xs [&_.rdp-weekday]:font-medium [&_.rdp-weekday]:text-muted-foreground",
-                        // Selected/today overrides
                         "[&_.rdp-day_selected]:!bg-primary [&_.rdp-day_selected]:!text-white [&_.rdp-day_selected]:!rounded-lg [&_.rdp-day_selected]:!font-semibold",
                         "[&_.rdp-day_today]:!border-2 [&_.rdp-day_today]:!border-primary/60 [&_.rdp-day_today]:!rounded-lg [&_.rdp-day_today]:!font-bold [&_.rdp-day_today]:!bg-primary/10",
                         "[&_.rdp-day_range_middle]:!bg-primary/15 [&_.rdp-day_range_middle]:!text-foreground"
@@ -349,6 +340,17 @@ export function TransactionList({ accounts }: TransactionListProps) {
                   </PopoverContent>
                 </Popover>
               )}
+
+              {/* NEW: Search Input */}
+              <div className="relative w-[220px]">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search transactions..."
+                  className="pl-9 h-8 text-xs"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
 
               {uploading ? (
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 rounded-md text-sm text-muted-foreground border border-border/50">
@@ -427,11 +429,16 @@ export function TransactionList({ accounts }: TransactionListProps) {
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <div className="font-medium truncate max-w-[220px]">
-                                    {t.description}
+                                    {t.clean_description || t.description}  {/* ← cleaned first, fallback to raw */}
                                   </div>
                                 </TooltipTrigger>
-                                <TooltipContent className="max-w-md break-words p-3 text-sm">
-                                  {t.description}
+                                <TooltipContent className="max-w-md break-words p-3 text-sm space-y-1">
+                                  <div>{t.clean_description || t.description}</div>
+                                  {t.clean_description && t.clean_description !== t.description && (
+                                    <div className="text-xs text-muted-foreground italic">
+                                      Original: {t.description}
+                                    </div>
+                                  )}
                                 </TooltipContent>
                               </Tooltip>
                             </div>
@@ -440,7 +447,6 @@ export function TransactionList({ accounts }: TransactionListProps) {
                               <span className={`font-medium ${t.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
                                 {formatCurrency(Math.abs(t.amount))}
                               </span>
-
                               <Select
                                 value={t.category_id.toString()}
                                 onValueChange={(v) => handleCategoryChange(t.id, parseInt(v))}
@@ -456,7 +462,6 @@ export function TransactionList({ accounts }: TransactionListProps) {
                                   ))}
                                 </SelectContent>
                               </Select>
-
                               <Select
                                 value={t.account_id?.toString() || ''}
                                 onValueChange={(v) => handleAccountChange(t.id, parseInt(v))}

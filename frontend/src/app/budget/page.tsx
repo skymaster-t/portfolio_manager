@@ -235,38 +235,50 @@ export default function BudgetPage() {
 
   return (
     <div className="p-6 space-y-8 max-w-7xl mx-auto">
+      {/* 1. Summary at the top – most important */}
       <BudgetSummaryCards summary={safeSummary} />
-
-      <div className="grid md:grid-cols-2 gap-8">
-        <IncomeExpensesCard
-          summary={safeSummary}
-          onAdd={() => {
-            setCurrentType('income');
-            setForm({ name: '', amount_monthly: '', category_id: '' });
-            setEditingItem(null);
-            setOpenItem(true);
-          }}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-        />
-        <CategoryManager onConfirmDelete={confirmDelete} />
+  
+      {/* 2. Main management row – Income/Expenses + Category Manager side by side */}
+      <div className="grid lg:grid-cols-5 gap-8">
+        {/* Income & Expenses takes more space */}
+        <div className="lg:col-span-3">
+          <IncomeExpensesCard
+            summary={safeSummary}
+            onAdd={() => {
+              setCurrentType('income');
+              setForm({ name: '', amount_monthly: '', category_id: '' });
+              setEditingItem(null);
+              setOpenItem(true);
+            }}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+          />
+        </div>
+  
+        {/* Category Manager on the right */}
+        <div className="lg:col-span-2">
+          <CategoryManager onConfirmDelete={confirmDelete} />
+        </div>
       </div>
-
+  
+      {/* 3. Visual breakdowns – side by side */}
       <div className="grid md:grid-cols-2 gap-8">
         <CategoryPieChart data={transactionSummary.income} title="Income Breakdown" type="income" />
         <CategoryPieChart data={transactionSummary.expense} title="Expense Breakdown" type="expense" />
       </div>
-
+  
+      {/* 4. Transactions – full width, detailed list */}
       <TransactionList accounts={accounts} />
-
+  
+      {/* 5. Dividends at the bottom */}
       <DividendBreakdownCard
         summary={safeSummary}
         allHoldings={allHoldings}
         onOpenDividend={openDividendDialog}
         onDeleteManualDividend={handleDeleteManualDividend}
       />
-
-      {/* Reusable dialogs */}
+  
+      {/* Reusable dialogs (unchanged) */}
       <BudgetItemDialog
         open={openItem}
         onOpenChange={setOpenItem}
@@ -280,7 +292,7 @@ export default function BudgetPage() {
         expenseCategories={expenseCategories}
         onSave={handleSaveItem}
       />
-
+  
       <DividendDialog
         open={dividendDialogOpen}
         onOpenChange={setDividendDialogOpen}
@@ -294,7 +306,7 @@ export default function BudgetPage() {
         onSave={handleDividendSave}
         onResetManual={handleResetManualDividend}
       />
-
+  
       <DeleteConfirmDialog
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}

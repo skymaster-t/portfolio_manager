@@ -293,13 +293,15 @@ def get_transactions(db: Session = Depends(get_db)):
         db.query(Transaction)
         .filter(Transaction.user_id == 1)
         .options(
-            joinedload(Transaction.category),   # eager load category
-            joinedload(Transaction.account)     # eager load account if used
+            joinedload(Transaction.category),
+            joinedload(Transaction.account)
         )
         .order_by(Transaction.date.desc())
         .all()
     )
-
+    
+    # Return the list directly — Pydantic will now serialize each Transaction
+    # using TransactionResponse, which triggers the @computed_field
     return transactions
     
 @router.patch("/{transaction_id}", response_model=TransactionResponse)
