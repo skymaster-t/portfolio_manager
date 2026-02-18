@@ -125,47 +125,55 @@ export default function BudgetPage() {
         await axios.post(`${API_BASE}/budget/items`, payload);
         toast.success('Item added');
       }
-      refetchSummary();
       refetchItems();
+      refetchSummary();
       setOpenItem(false);
-      setEditingItem(null);
     } catch (err: any) {
       toast.error(`Failed: ${err.response?.data?.detail || 'Unknown error'}`);
     }
   };
 
-  const handleDelete = (id: number, name: string) => {
+  const handleDelete = (itemId: number, name: string) => {
     confirmDelete(
       'Delete Budget Item',
       `Are you sure you want to delete "${name}"?`,
       async () => {
-        await axios.delete(`${API_BASE}/budget/items/${id}`);
-        refetchSummary();
-        refetchItems();
+        try {
+          await axios.delete(`${API_BASE}/budget/items/${itemId}`);
+          toast.success('Item deleted');
+          refetchItems();
+          refetchSummary();
+        } catch (err: any) {
+          toast.error(`Delete failed: ${err.response?.data?.detail || 'Unknown error'}`);
+        }
       }
     );
   };
 
-  const openDividendDialog = (mode: 'add' | 'edit', holdingId?: number) => {
+  const openDividendDialog = (holdingId: number | null, mode: 'add' | 'edit' = 'add') => {
+    setSelectedHoldingId(holdingId);
     setDividendMode(mode);
-    if (mode === 'edit' && holdingId) {
-      setSelectedHoldingId(holdingId);
-      const item = safeSummary.dividend_breakdown.find((i: any) => i.holding_id === holdingId);
-      setDivForm({ annual_per_share: item?.dividend_annual_per_share?.toString() || '' });
+    if (holdingId && mode === 'edit') {
+      const holding = safeSummary.dividend_breakdown.find((h: any) => h.holding_id === holdingId);
+      setDivForm({
+        annual_per_share: holding?.dividend_annual_per_share?.toString() || '',
+      });
     } else {
-      setSelectedHoldingId(null);
       setDivForm({ annual_per_share: '' });
     }
     setDividendDialogOpen(true);
   };
 
   const handleDividendSave = async () => {
-    if (!selectedHoldingId) return;
+    if (!divForm.annual_per_share || isNaN(parseFloat(divForm.annual_per_share))) {
+      toast.error('Valid annual dividend per share required');
+      return;
+    }
 
-    const payload: any = {};
-    if (divForm.annual_per_share.trim()) {
-      payload.dividend_annual_per_share = parseFloat(divForm.annual_per_share);
-    } else {
+    const payload = {
+      dividend_annual_per_share: parseFloat(divForm.annual_per_share),
+    };
+    if (dividendMode === 'add') {
       payload.dividend_annual_per_share = null;
     }
 
@@ -229,20 +237,19 @@ export default function BudgetPage() {
     <div className="p-6 space-y-8 max-w-7xl mx-auto">
       <BudgetSummaryCards summary={safeSummary} />
 
-      <IncomeExpensesCard
-        summary={safeSummary}
-        onAdd={() => {
-          setCurrentType('income');
-          setForm({ name: '', amount_monthly: '', category_id: '' });
-          setEditingItem(null);
-          setOpenItem(true);
-        }}
-        onEdit={handleEdit}
-        onDelete={handleDelete}
-      />
-
       <div className="grid md:grid-cols-2 gap-8">
-        <CategoryManager />
+        <IncomeExpensesCard
+          summary={safeSummary}
+          onAdd={() => {
+            setCurrentType('income');
+            setForm({ name: '', amount_monthly: '', category_id: '' });
+            setEditingItem(null);
+            setOpenItem(true);
+          }}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+        />
+        <CategoryManager onConfirmDelete={confirmDelete} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-8">

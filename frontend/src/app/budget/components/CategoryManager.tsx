@@ -8,16 +8,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Trash2, Edit } from 'lucide-react';
+import { Trash2, Edit, Plus, Search } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
-export function CategoryManager() {
+interface CategoryManagerProps {
+  onConfirmDelete: (title: string, message: string, onConfirm: () => Promise<void>) => void;
+}
+
+export function CategoryManager({ onConfirmDelete }: CategoryManagerProps) {
   const { data: categories = [], refetch } = useCategories();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -26,6 +31,8 @@ export function CategoryManager() {
     name: '',
     type: 'income',
   });
+  const [search, setSearch] = useState('');
+  const [tab, setTab] = useState('income');
 
   const handleEdit = (cat: any) => {
     setForm({ name: cat.name, type: cat.type });
@@ -41,7 +48,7 @@ export function CategoryManager() {
 
     try {
       if (editing) {
-        await axios.put(`${API_BASE}/budget/categories/${editing.id}`, form);
+        await axios.patch(`${API_BASE}/budget/categories/${editing.id}`, form);
         toast.success('Category updated');
       } else {
         await axios.post(`${API_BASE}/budget/categories`, form);
@@ -59,107 +66,92 @@ export function CategoryManager() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    try {
-      await axios.delete(`${API_BASE}/budget/categories/${id}`);
-      toast.success('Category deleted');
+  const handleDelete = (id: number, name: string) => {
+    onConfirmDelete(
+      'Delete Category',
+      `Are you sure you want to delete "${name}"? This will move associated items to "Other".`,
+      async () => {
+        try {
+          await axios.delete(`${API_BASE}/budget/categories/${id}`);
+          toast.success('Category deleted');
 
-      await Promise.all([
-        refetch(),
-        queryClient.invalidateQueries({ queryKey: ['transactionSummary'] }),
-      ]);
-    } catch (err: any) {
-      toast.error(`Failed: ${err.response?.data?.detail || 'Unknown error'}`);
-    }
+          await Promise.all([
+            refetch(),
+            queryClient.invalidateQueries({ queryKey: ['transactionSummary'] }),
+          ]);
+        } catch (err: any) {
+          toast.error(`Failed: ${err.response?.data?.detail || 'Unknown error'}`);
+        }
+      }
+    );
   };
 
   const customCategories = categories.filter((c: any) => c.is_custom);
-  const incomeCustom = customCategories.filter((c: any) => c.type === 'income');
-  const expenseCustom = customCategories.filter((c: any) => c.type === 'expense');
+  const filtered = customCategories
+    .filter((c: any) => c.type === tab && c.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <Card className="flex flex-col" style={{ maxHeight: '420px' }}> {/* ← Card max height – adjust as needed */}
-      <CardHeader className="py-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Manage Categories</CardTitle>
+    <Card className="shadow-lg rounded-xl overflow-hidden flex flex-col h-[520px]"> {/* ← Fixed height */}
+      <CardHeader className="p-4 bg-gradient-to-r from-primary/5 to-primary/10 flex-shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <CardTitle className="text-xl font-bold">Manage Categories</CardTitle>
           <Button size="sm" onClick={() => {
-            setForm({ name: '', type: 'income' });
+            setForm({ name: '', type: tab });
             setEditing(null);
             setOpen(true);
           }}>
-            + Add Category
+            <Plus className="h-4 w-4 mr-2" /> Add
           </Button>
+        </div>
+        <div className="flex items-center gap-3">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as 'income' | 'expense')} className="flex-1">
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="income">Income</TabsTrigger>
+              <TabsTrigger value="expense">Expense</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search categories..."
+              className="pl-9 h-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
       </CardHeader>
 
       <CardContent className="p-0 flex-1 flex flex-col overflow-hidden">
-        {/* Scrollable categories area */}
-        <div className="flex-1 overflow-y-auto px-3 pb-3 pt-1">
-          <div className="grid grid-cols-2 gap-6 min-h-full">
-            {/* Income Column */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold sticky top-0 bg-card z-10 pb-1 border-b">
-                Income Categories
-              </h4>
-              <div className="space-y-1.5">
-                {incomeCustom.map((cat: any) => (
-                  <div
-                    key={cat.id}
-                    className="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-md border text-sm hover:bg-muted/50 transition-colors"
-                  >
-                    <span className="font-medium truncate max-w-[160px]">{cat.name}</span>
-                    <div className="flex gap-1 flex-shrink-0">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(cat)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(cat.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                {incomeCustom.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-6 italic">
-                    No custom income categories yet
-                  </p>
-                )}
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto px-4 py-2">
+          <div className="space-y-1.5">
+            {filtered.map((cat: any) => (
+              <div
+                key={cat.id}
+                className="flex items-center justify-between py-2.5 px-3 bg-muted/30 rounded-md border text-sm hover:bg-muted/50 transition-colors"
+              >
+                <span className="font-medium truncate max-w-[220px]">{cat.name}</span>
+                <div className="flex gap-1 flex-shrink-0">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(cat)}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(cat.id, cat.name)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
               </div>
-            </div>
-
-            {/* Expense Column */}
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold sticky top-0 bg-card z-10 pb-1 border-b">
-                Expense Categories
-              </h4>
-              <div className="space-y-1.5">
-                {expenseCustom.map((cat: any) => (
-                  <div
-                    key={cat.id}
-                    className="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-md border text-sm hover:bg-muted/50 transition-colors"
-                  >
-                    <span className="font-medium truncate max-w-[160px]">{cat.name}</span>
-                    <div className="flex gap-1 flex-shrink-0">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(cat)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDelete(cat.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                {expenseCustom.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-6 italic">
-                    No custom expense categories yet
-                  </p>
-                )}
-              </div>
-            </div>
+            ))}
+            {filtered.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-10 italic">
+                No custom {tab} categories yet
+              </p>
+            )}
           </div>
         </div>
       </CardContent>
 
-      {/* Dialog remains unchanged */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>

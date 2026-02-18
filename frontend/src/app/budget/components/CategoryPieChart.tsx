@@ -8,9 +8,9 @@ import { formatCurrency } from '@/lib/utils';
 
 const COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#a855f7', '#ec4899', '#14b8a6', '#6366f1', '#f43f5e'];
 
-const NEON_RED = '#FF4500';  // Neon red (orangered for vibrant neon feel)
+const NEON_RED = '#FF4500';
 
-const OTHER_THRESHOLD = 100; // $100
+const OTHER_THRESHOLD = 100;
 
 const renderActiveShape = (props: any) => {
   const RADIAN = Math.PI / 180;
@@ -60,9 +60,6 @@ interface Props {
 export function CategoryPieChart({ data, title, type }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
 
-  // ────────────────────────────────────────────────
-  // 1. Prepare base data with absolute values
-  // ────────────────────────────────────────────────
   const baseData = data.map(item => ({
     category: item.category,
     total: Math.abs(item.total),
@@ -70,14 +67,8 @@ export function CategoryPieChart({ data, title, type }: Props) {
     value: Math.abs(item.total),
   }));
 
-  // ────────────────────────────────────────────────
-  // 2. Sort descending by value (biggest → smallest)
-  // ────────────────────────────────────────────────
   const sortedBase = [...baseData].sort((a, b) => b.value - a.value);
 
-  // ────────────────────────────────────────────────
-  // 3. Group small items (< $100) into "Other" for PIE ONLY
-  // ────────────────────────────────────────────────
   const pieDataForChart = (() => {
     const significant = sortedBase.filter(item => item.value >= OTHER_THRESHOLD);
     const smallItems = sortedBase.filter(item => item.value < OTHER_THRESHOLD);
@@ -95,7 +86,6 @@ export function CategoryPieChart({ data, title, type }: Props) {
       });
     }
 
-    // Recalculate percentages based on what’s actually shown in the pie
     const totalSum = result.reduce((sum, item) => sum + item.value, 0);
     result.forEach(item => {
       item.percentage = (item.value / totalSum) * 100;
@@ -104,9 +94,6 @@ export function CategoryPieChart({ data, title, type }: Props) {
     return result;
   })();
 
-  // ────────────────────────────────────────────────
-  // 4. Full legend data (always shows all items, even small ones)
-  // ────────────────────────────────────────────────
   const legendData = (() => {
     const totalSum = baseData.reduce((sum, item) => sum + item.value, 0);
     return sortedBase.map(item => ({
@@ -135,7 +122,6 @@ export function CategoryPieChart({ data, title, type }: Props) {
   };
 
   const renderLegend = (props: any) => {
-    // We ignore Recharts payload and use our own sorted + full list
     return (
       <div className="mt-3 px-3 pb-2">
         <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-2.5 text-sm">
@@ -162,53 +148,55 @@ export function CategoryPieChart({ data, title, type }: Props) {
   };
 
   return (
-    <Card className="h-full flex flex-col overflow-hidden">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg font-semibold">{title}</CardTitle>
+    <Card className="shadow-lg rounded-xl overflow-hidden flex flex-col h-[520px]">
+      <CardHeader className="p-4 bg-gradient-to-r from-primary/5 to-primary/10 flex-shrink-0">
+        <CardTitle className="text-xl font-bold">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 pt-1 pb-0 flex flex-col">
-        <div className="flex-1 min-h-[360px] sm:min-h-[380px] lg:min-h-[400px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <defs>
-                <filter id="neonGlowMedium" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="4.5" result="blur" />
-                  <feColorMatrix
-                    in="blur"
-                    mode="matrix"
-                    values="1 0 0 0 0   0 0 0 0 0   0 0 0 0 0   0 0 0 0.85 0"  // Adjusted for red glow
-                    result="glow"
-                  />
-                  <feComposite in="SourceGraphic" in2="glow" operator="over" />
-                </filter>
-              </defs>
+      <CardContent className="p-0 flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/40 scrollbar-track-transparent">
+          <div className="h-full w-full p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <defs>
+                  <filter id="neonGlowMedium" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="4.5" result="blur" />
+                    <feColorMatrix
+                      in="blur"
+                      mode="matrix"
+                      values="1 0 0 0 0   0 0 0 0 0   0 0 0 0 0   0 0 0 0.85 0"
+                      result="glow"
+                    />
+                    <feComposite in="SourceGraphic" in2="glow" operator="over" />
+                  </filter>
+                </defs>
 
-              <Pie
-                activeIndex={activeIndex}
-                activeShape={renderActiveShape}
-                data={pieDataForChart}
-                cx="50%"
-                cy="42%"
-                innerRadius={60}
-                outerRadius={105}
-                paddingAngle={1.5}
-                dataKey="value"
-                onMouseEnter={(_, index) => setActiveIndex(index)}
-                onMouseLeave={() => setActiveIndex(undefined)}
-              >
-                {pieDataForChart.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
+                <Pie
+                  activeIndex={activeIndex}
+                  activeShape={renderActiveShape}
+                  data={pieDataForChart}
+                  cx="50%"
+                  cy="42%"
+                  innerRadius={60}
+                  outerRadius={105}
+                  paddingAngle={1.5}
+                  dataKey="value"
+                  onMouseEnter={(_, index) => setActiveIndex(index)}
+                  onMouseLeave={() => setActiveIndex(undefined)}
+                >
+                  {pieDataForChart.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
 
-              <Tooltip content={<CustomTooltip />} />
-              <Legend
-                content={renderLegend}
-                verticalAlign="bottom"
-                wrapperStyle={{ outline: 'none' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+                <Tooltip content={<CustomTooltip />} />
+                <Legend
+                  content={renderLegend}
+                  verticalAlign="bottom"
+                  wrapperStyle={{ outline: 'none' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </CardContent>
     </Card>

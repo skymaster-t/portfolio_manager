@@ -164,3 +164,29 @@
 .animate-pulse-ring {
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* styles/globals.css or tailwind layer */
+@layer utilities {
+  .scroll-area-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground)/0.4) transparent;
+  }
+
+  .scroll-area-viewport::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scroll-area-viewport::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scroll-area-viewport::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground)/0.4);
+    border-radius: 9999px;
+  }
+
+  .scroll-area-viewport::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground)/0.6);
+  }
+}
