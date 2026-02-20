@@ -1,4 +1,4 @@
-// src/app/portfolio/components/PortfolioValueChart.tsx (full code: fixed missing CartesianGrid import; premium area chart with gradient fill, current value vertical line + large dot + value label – Robinhood/Wealthsimple style; clean, modern)
+// src/app/portfolio/components/PortfolioValueChart.tsx
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -8,7 +8,7 @@ import {
   Area,
   XAxis,
   YAxis,
-  CartesianGrid, // ← Fixed: added missing import
+  CartesianGrid,
   Tooltip,
   ReferenceLine,
 } from 'recharts';
@@ -16,6 +16,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useGlobalIntradayHistory } from '@/lib/queries';
+import {
+  parseISO,
+  format,
+  subDays,
+  subMonths,
+  subYears,
+  startOfYear,
+} from 'date-fns';
 
 interface HistoryPoint {
   timestamp: string;
@@ -35,7 +43,18 @@ export function PortfolioValueChart() {
   } = useGlobalIntradayHistory();
 
   const chartData = useMemo(() => {
-    if (history.length === 0) return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
+    if (history.length === 0) {
+      return {
+        data: [],
+        useTimeAxis: false,
+        xDomain: undefined,
+        yDomain: undefined,
+        ticks: undefined,
+        isFallback: false,
+        latestValue: 0,
+        dayKeys: [], // ← added here
+      };
+    }
 
     const parsed = history
       .map((point: HistoryPoint) => {
@@ -47,23 +66,161 @@ export function PortfolioValueChart() {
       })
       .sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
 
-    const isDayPeriod = period === 'day';
+    // Helpers
+    const getLocalDateTime = (utcDate: Date) => {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TORONTO_TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const parts = formatter.formatToParts(utcDate);
+      const map: Record<string, string> = {};
+      parts.forEach(({ type, value }) => (map[type] = value));
+      return {
+        year: map.year,
+        month: map.month,
+        day: map.day,
+        hour: Number(map.hour),
+        minute: Number(map.minute),
+      };
+    };
 
-    let todayFiltered = parsed;
-    if (isDayPeriod) {
-      const todayToronto = new Date().toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
-      todayFiltered = parsed.filter(
+    const isTradingHour = (utcDate: Date) => {
+      const local = getLocalDateTime(utcDate);
+      const { hour, minute } = local;
+      if (hour < 9 || hour > 16) return false;
+      if (hour === 9 && minute < 30) return false;
+      if (hour === 16 && minute > 0) return false;
+      return true;
+    };
+
+    // Filter data based on selected period
+    const now = new Date();
+    let filtered = parsed;
+
+    if (period === 'day') {
+      const todayToronto = now.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ });
+      filtered = parsed.filter(
         (p) => p.utcDate.toLocaleDateString('en-CA', { timeZone: TORONTO_TZ }) === todayToronto
       );
+    } else if (period === 'week') {
+      filtered = parsed.filter((p) => p.utcDate >= subDays(now, 7));
+    } else if (period === 'month') {
+      filtered = parsed.filter((p) => p.utcDate >= subMonths(now, 1));
+    } else if (period === '3m') {
+      filtered = parsed.filter((p) => p.utcDate >= subMonths(now, 3));
+    } else if (period === 'year') {
+      filtered = parsed.filter((p) => p.utcDate >= subYears(now, 1));
+    } else if (period === '2y') {
+      filtered = parsed.filter((p) => p.utcDate >= subYears(now, 2));
+    } else if (period === '3y') {
+      filtered = parsed.filter((p) => p.utcDate >= subYears(now, 3));
+    } else if (period === 'ytd') {
+      filtered = parsed.filter((p) => p.utcDate >= startOfYear(now));
+    } // 'all' → no filter
+
+    // Downsampling & normalization for week/month
+    let processed = filtered;
+    let dayKeys: string[] = [];
+
+    if (period === 'week' || period === 'month') {
+      const byDay: Record<string, typeof parsed[0][]> = {};
+      processed.forEach((p) => {
+        if (!isTradingHour(p.utcDate)) return;
+        const local = getLocalDateTime(p.utcDate);
+        const dayKey = `${local.year}-${local.month}-${local.day}`;
+        if (!byDay[dayKey]) byDay[dayKey] = [];
+        byDay[dayKey].push(p);
+      });
+
+      dayKeys = Object.keys(byDay).sort();
+
+      const sampled: (typeof parsed[0] & { x: number; dayKey: string; tooltipLabel: string })[] = [];
+      dayKeys.forEach((day, dayIndex) => {
+        let points = byDay[day].sort((a, b) => a.utcDate.getTime() - b.utcDate.getTime());
+        const numPoints = points.length;
+        if (numPoints === 0) return;
+
+        if (numPoints <= 5) {
+          points.forEach((p) => {
+            const local = getLocalDateTime(p.utcDate);
+            const intraDayFraction = ((local.hour + local.minute / 60) - 9.5) / 6.5;
+            sampled.push({
+              ...p,
+              x: dayIndex + intraDayFraction,
+              dayKey: day,
+              tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+                timeZone: TORONTO_TZ,
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              }),
+            });
+          });
+          return;
+        }
+
+        const step = Math.floor(numPoints / 4);
+        for (let i = 0; i < numPoints; i += step) {
+          const p = points[i];
+          const local = getLocalDateTime(p.utcDate);
+          const intraDayFraction = ((local.hour + local.minute / 60) - 9.5) / 6.5;
+          sampled.push({
+            ...p,
+            x: dayIndex + intraDayFraction,
+            dayKey: day,
+            tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+              timeZone: TORONTO_TZ,
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            }),
+          });
+        }
+
+        // Always include closing point
+        const lastIdx = numPoints - 1;
+        if (lastIdx % step !== 0) {
+          const p = points[lastIdx];
+          const local = getLocalDateTime(p.utcDate);
+          const intraDayFraction = ((local.hour + local.minute / 60) - 9.5) / 6.5;
+          sampled.push({
+            ...p,
+            x: dayIndex + intraDayFraction,
+            dayKey: day,
+            tooltipLabel: p.utcDate.toLocaleString('en-CA', {
+              timeZone: TORONTO_TZ,
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+            }),
+          });
+        }
+      });
+
+      processed = sampled;
     }
 
+    // Prepare final chart data
     let data: any[] = [];
     let useTimeAxis = false;
     let xDomain: [number, number] | undefined = undefined;
     let ticks: number[] | undefined = undefined;
     let isFallback = false;
 
-    if (isDayPeriod) {
+    if (period === 'day') {
+      useTimeAxis = true;
+
       const today = new Date();
       const year = today.getFullYear();
       const month = today.getMonth();
@@ -82,15 +239,13 @@ export function PortfolioValueChart() {
         ticks.push(midnightMs + h * hourMs);
       }
 
-      const clipped = todayFiltered.filter((p) => {
+      const clipped = processed.filter((p) => {
         const t = p.utcDate.getTime();
         return t >= startMs && t <= endMs;
       });
 
       if (clipped.length > 0) {
-        useTimeAxis = true;
-
-        const realData = clipped.map((p) => ({
+        data = clipped.map((p) => ({
           time: p.utcDate.getTime(),
           value: p.value,
           tooltipLabel: p.utcDate.toLocaleString('en-CA', {
@@ -103,9 +258,7 @@ export function PortfolioValueChart() {
           }),
         }));
 
-        data = realData;
-        const firstTime = realData[0].time;
-        if (firstTime > startMs) {
+        if (data.length > 0 && data[0].time > startMs) {
           const carriedTooltip = new Date(startMs).toLocaleString('en-CA', {
             timeZone: TORONTO_TZ,
             month: 'short',
@@ -113,89 +266,73 @@ export function PortfolioValueChart() {
             year: 'numeric',
             hour: 'numeric',
             minute: '2-digit',
-          }) + ' (carried forward)';
-
-          data = [
-            {
-              time: startMs,
-              value: realData[0].value,
-              tooltipLabel: carriedTooltip,
-            },
-            ...realData,
-          ];
+          });
+          data.unshift({
+            time: startMs,
+            value: data[0].value,
+            tooltipLabel: carriedTooltip,
+          });
+          isFallback = true;
         }
-      } else {
+      } else if (parsed.length > 0) {
+        const lastPoint = parsed[parsed.length - 1];
+        const carriedTooltip = new Date(startMs).toLocaleString('en-CA', {
+          timeZone: TORONTO_TZ,
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+        data = [
+          { time: startMs, value: lastPoint.value, tooltipLabel: carriedTooltip },
+          { time: endMs, value: lastPoint.value, tooltipLabel: carriedTooltip },
+        ];
         isFallback = true;
-        const fallbackPoints = parsed.slice(-3);
+      }
+    } else if (period === 'week' || period === 'month') {
+      useTimeAxis = true;
+      data = processed.map((p) => ({
+        time: p.x,
+        value: p.value,
+        tooltipLabel: p.tooltipLabel,
+      }));
+      xDomain = [0, dayKeys.length];
+      ticks = dayKeys.map((_, idx) => idx);
+    } else {
+      // Longer periods: daily closing values
+      useTimeAxis = false;
 
-        if (fallbackPoints.length === 0) {
-          return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
+      const dailyMap = new Map<string, { date: Date; value: number }>();
+
+      filtered.forEach((p) => {
+        const dateStr = format(p.utcDate, 'yyyy-MM-dd');
+        const existing = dailyMap.get(dateStr);
+        if (!existing || p.utcDate.getTime() > existing.date.getTime()) {
+          dailyMap.set(dateStr, { date: p.utcDate, value: p.value });
         }
+      });
 
-        data = fallbackPoints.map((p) => ({
-          label: p.utcDate.toLocaleString('en-CA', {
-            timeZone: TORONTO_TZ,
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }),
-          value: p.value,
-          tooltipLabel: p.utcDate.toLocaleString('en-CA', {
-            timeZone: TORONTO_TZ,
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }),
+      const dailyData = Array.from(dailyMap.values())
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+        .map((entry) => ({
+          label: format(entry.date, 'MMM d'),
+          value: entry.value,
+          tooltipLabel: format(entry.date, 'MMM d, yyyy'),
         }));
 
-        useTimeAxis = false;
-        xDomain = undefined;
-        ticks = undefined;
-      }
-    } else {
-      data = parsed.map((p) => ({
-        label: p.utcDate.toLocaleDateString('en-CA', {
-          timeZone: TORONTO_TZ,
-          month: 'short',
-          day: 'numeric',
-        }),
-        value: p.value,
-        tooltipLabel: p.utcDate.toLocaleString('en-CA', {
-          timeZone: TORONTO_TZ,
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        }),
-      }));
+      data = dailyData;
     }
 
-    const plotValues = data.map((d: any) => d.value);
-    if (plotValues.length === 0) {
-      return { data: [], useTimeAxis: false, xDomain: undefined, yDomain: undefined, ticks: undefined, isFallback: false, latestValue: 0 };
-    }
+    // Y-domain with padding
+    const values = data.map((d) => d.value).filter((v) => v != null);
+    const minVal = values.length > 0 ? Math.min(...values) : 0;
+    const maxVal = values.length > 0 ? Math.max(...values) : 0;
+    const range = maxVal - minVal;
+    const padding = range * 0.05 || 100;
+    const yDomain: [number, number] = [minVal - padding, maxVal + padding];
 
-    const dataMin = Math.min(...plotValues);
-    const dataMax = Math.max(...plotValues);
-
-    let yLower = dataMin;
-    let yUpper = dataMax;
-
-    if (dataMin === dataMax) {
-      yLower = dataMin * 0.9;
-      yUpper = dataMin * 1.1;
-    } else {
-      const range = dataMax - dataMin;
-      const padding = range * 0.1;
-      yLower = dataMin - padding;
-      yUpper = dataMax + padding;
-    }
-
-    const yDomain: [number, number] = [yLower, yUpper];
-
-    const latestValue = data[data.length - 1].value;
+    const latestValue = data.length > 0 ? data[data.length - 1].value : 0;
 
     return {
       data,
@@ -205,70 +342,57 @@ export function PortfolioValueChart() {
       ticks,
       isFallback,
       latestValue,
+      dayKeys, // ← now returned so tickFormatter can access it
     };
   }, [history, period]);
 
   if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <Skeleton className="h-96 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (chartData.data.length === 0) {
-    return (
-      <Card>
-        <CardContent className="pt-6 text-center text-muted-foreground">
-          No data available for selected period
-        </CardContent>
-      </Card>
-    );
+    return <Skeleton className="h-[400px] w-full rounded-lg" />;
   }
 
   return (
     <Card>
       <CardContent className="pt-6">
-        {chartData.isFallback && (
-          <p className="text-center text-muted-foreground mb-4">
-            No intraday data available today. Showing the most recent 3 historical snapshots.
-          </p>
-        )}
-
         <ResponsiveContainer width="100%" height={400}>
-          <AreaChart data={chartData.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+          <AreaChart data={chartData.data} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="gradientFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
               </linearGradient>
             </defs>
 
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" opacity={0.3} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" vertical={false} />
 
             <XAxis
               dataKey={chartData.useTimeAxis ? 'time' : 'label'}
               type={chartData.useTimeAxis ? 'number' : 'category'}
               domain={chartData.xDomain}
               ticks={chartData.ticks}
-              tickFormatter={
-                chartData.useTimeAxis
-                  ? (ms: number) =>
-                      new Date(ms).toLocaleTimeString('en-CA', {
-                        timeZone: TORONTO_TZ,
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })
-                  : undefined
-              }
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              tick={{ fontSize: 12 }}
+              tickFormatter={(tick, index) => {
+                if (chartData.useTimeAxis) {
+                  if (period === 'day') {
+                    const date = new Date(tick);
+                    return date.toLocaleTimeString('en-CA', {
+                      timeZone: TORONTO_TZ,
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    });
+                  } else if (period === 'week' || period === 'month') {
+                    const dayIndex = Math.floor(tick);
+                    const dayKey = chartData.dayKeys?.[dayIndex];
+                    return dayKey ? format(new Date(dayKey), 'MMM d') : '';
+                  }
+                }
+                // Longer periods
+                return chartData.data[index]?.label || '';
+              }}
             />
+
             <YAxis
               domain={chartData.yDomain}
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              tick={{ fontSize: 12 }}
               tickFormatter={(value) =>
                 new Intl.NumberFormat('en-CA', {
                   style: 'currency',
@@ -278,6 +402,7 @@ export function PortfolioValueChart() {
                 }).format(value)
               }
             />
+
             <Tooltip
               formatter={(value: number) =>
                 new Intl.NumberFormat('en-CA', {
@@ -309,18 +434,18 @@ export function PortfolioValueChart() {
               fill="url(#gradientFill)"
             />
 
-            {/* Current value marker – vertical line + large dot + value label */}
+            {/* Current value marker */}
             {chartData.data.length > 0 && (
               <>
                 <ReferenceLine
-                  x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : chartData.data[chartData.data.length - 1].label}
+                  x={chartData.data[chartData.data.length - 1][chartData.useTimeAxis ? 'time' : 'label']}
                   stroke="#6366f1"
                   strokeDasharray="5 5"
                   strokeOpacity={0.6}
                 />
 
                 <circle
-                  cx={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
+                  cx={chartData.data[chartData.data.length - 1][chartData.useTimeAxis ? 'time' : 'label']}
                   cy={chartData.data[chartData.data.length - 1].value}
                   r={8}
                   fill="#6366f1"
@@ -329,7 +454,7 @@ export function PortfolioValueChart() {
                 />
 
                 <text
-                  x={chartData.useTimeAxis ? chartData.data[chartData.data.length - 1].time : undefined}
+                  x={chartData.data[chartData.data.length - 1][chartData.useTimeAxis ? 'time' : 'label']}
                   y={chartData.data[chartData.data.length - 1].value - 15}
                   textAnchor="middle"
                   fill="#1f2937"
@@ -357,7 +482,7 @@ export function PortfolioValueChart() {
               onClick={() => setPeriod(p)}
               className={
                 period === p
-                  ? 'bg-indigo-600 hover:bg-indigo-700'
+                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
                   : 'hover:bg-indigo-50 hover:text-indigo-700'
               }
             >
