@@ -88,7 +88,17 @@ export function IncomeExpensesCard({
   return (
     <Card className="shadow-lg rounded-xl overflow-hidden flex flex-col h-[520px]">
       <CardHeader className="p-4 bg-gradient-to-r from-primary/5 to-primary/10 flex-shrink-0">
-        <CardTitle className="text-xl font-bold">Income & Expenses</CardTitle>
+        <div className="flex items-center justify-between mb-3">
+          <CardTitle className="text-xl font-bold">Income & Expenses</CardTitle>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8 gap-1"
+            onClick={onAdd}
+          >
+            <Plus className="h-4 w-4 mr-2" /> Add
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="p-0 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/40 scrollbar-track-transparent">
         <div className="space-y-6 p-4">

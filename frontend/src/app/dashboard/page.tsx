@@ -19,7 +19,13 @@ import { HoldingsTicker } from './components/HoldingsTicker';
 import { PortfolioHeader } from '../portfolio/components/PortfolioHeader';
 import { PrimaryHoldingsTable } from './components/PrimaryHoldingsTable';
 import { SectorAllocationCard } from './components/SectorAllocationCard'; 
-import { useGlobalIntradayHistory, useGlobalDailyHistory, useFxRate, useGlobalSectorAllocation } from '@/lib/queries';
+import { 
+  useGlobalIntradayHistory, 
+  useGlobalDailyHistory, 
+  useFxRate, 
+  useGlobalSectorAllocation,
+  usePortfolioSummaries
+} from '@/lib/queries';
 
 interface DailyGlobalHistory {
   timestamp: string;
@@ -73,6 +79,11 @@ export default function DashboardPage() {
     isError: sectorIsError,
     error: sectorError,
   } = useGlobalSectorAllocation()
+
+  const {
+    data: portfolioSummaries = [],
+    isLoading: summariesLoading,
+  } = usePortfolioSummaries();
 
   // Enhanced debug logging (keeps previous useEffect if you have it)
   useEffect(() => {
@@ -136,8 +147,8 @@ export default function DashboardPage() {
   }, [rawDailyHistory, period]);
 
   return (
-    <div className="container mx-auto py-8 space-y-12">
-      {/* Portfolio Overview Header */}
+    <div className="container mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-10 md:space-y-12">
+      {/* === Global Portfolio Overview Header === */}
       <PortfolioHeader
         totalValue={latest?.total_value || 0}
         gainLoss={latest?.all_time_gain || 0}
@@ -152,34 +163,126 @@ export default function DashboardPage() {
         lastUpdated={lastUpdatedRelative}
       />
 
-      {/* Live Holdings Ticker */}
-      <Card>
-        <HoldingsTicker />
-      </Card>
+      {/* === Individual Portfolio Summary Cards – stretches to full width === */}
+      {portfolioSummaries && portfolioSummaries.length > 0 && (
+        <div
+          className="
+            grid
+            gap-5
+            grid-cols-1
+            sm:grid-cols-2
+            lg:grid-cols-[repeat(auto-fit,minmax(320px,1fr))]
+          "
+        >
+          {portfolioSummaries.map((summary) => {
+            const isPositiveDaily   = summary.dailyPercent >= 0;
+            const isPositiveAllTime = summary.allTimePercent >= 0;
 
-      {/* Intraday + Primary Holdings Table side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card>
+            // Currency conversion
+            const totalValueConverted =
+              displayCurrency === 'USD'
+                ? summary.totalValue / exchangeRate
+                : summary.totalValue;
+
+            const dailyChangeConverted =
+              displayCurrency === 'USD'
+                ? summary.dailyChange / exchangeRate
+                : summary.dailyChange;
+
+            const gainLossConverted =
+              displayCurrency === 'USD'
+                ? summary.gainLoss / exchangeRate
+                : summary.gainLoss;
+
+            return (
+              <Card
+                key={summary.id}
+                className="
+                  flex flex-col
+                  h-full
+                  overflow-hidden
+                  border border-border/60
+                  shadow-sm hover:shadow transition-shadow duration-200
+                "
+              >
+                <CardHeader className="bg-muted/30 pb-3 pt-4">
+                  <CardTitle className="text-lg font-semibold tracking-tight truncate">
+                    {summary.name}
+                  </CardTitle>
+                </CardHeader>
+
+                <CardContent className="flex-1 pt-5 pb-6 px-6 space-y-5 text-sm">
+                  {/* Total Value – moved to top & made dominant */}
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground font-medium">Total Value</div>
+                    <div className="text-3xl sm:text-4xl font-black tabular-nums tracking-tight text-foreground">
+                      {new Intl.NumberFormat('en-CA', {
+                        style: 'currency',
+                        currency: displayCurrency,
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 0,
+                      }).format(totalValueConverted)}
+                    </div>
+                  </div>
+
+                  {/* Today's Return */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Today's Return</span>
+                    <div className="text-right">
+                      <span className={`font-semibold tabular-nums ${isPositiveDaily ? 'text-green-600' : 'text-red-600'}`}>
+                        {dailyChangeConverted >= 0 ? '+' : ''}
+                        {new Intl.NumberFormat('en-CA', { style: 'currency', currency: displayCurrency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(dailyChangeConverted)}
+                      </span>
+                      <span className={`ml-2.5 font-medium ${isPositiveDaily ? 'text-green-600' : 'text-red-600'}`}>
+                        ({isPositiveDaily ? '+' : ''}{summary.dailyPercent.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* All-Time Return */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">All-Time Return</span>
+                    <div className="text-right">
+                      <span className={`font-semibold tabular-nums ${isPositiveAllTime ? 'text-green-600' : 'text-red-600'}`}>
+                        {gainLossConverted >= 0 ? '+' : ''}
+                        {new Intl.NumberFormat('en-CA', { style: 'currency', currency: displayCurrency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(gainLossConverted)}
+                      </span>
+                      <span className={`ml-2.5 font-medium ${isPositiveAllTime ? 'text-green-600' : 'text-red-600'}`}>
+                        ({isPositiveAllTime ? '+' : ''}{summary.allTimePercent.toFixed(2)}%)
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+                
+              </Card>
+            );
+          })}
+        </div>
+      )}  
+  
+      {/* === Intraday Chart + Primary Holdings Table === */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 xl:gap-8">
+        <Card className="border-border/60 shadow-sm">
           <CardHeader>
             <CardTitle>Intraday Portfolio Value</CardTitle>
-            <CardDescription>Real-time updates (8 AM – 5 PM market window)</CardDescription>
+            <CardDescription>Real-time updates (market hours)</CardDescription>
           </CardHeader>
           <CardContent>
             <PortfolioValueChart noCard hidePeriodSelector />
           </CardContent>
         </Card>
-
+  
         <PrimaryHoldingsTable />
       </div>
-
-      {/* Long-Term + Recent Performance side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card>
+  
+      {/* === Long-Term Chart + Recent Performance + Sector Allocation === */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 xl:gap-8">
+        <Card className="border-border/60 shadow-sm">
           <CardHeader>
             <CardTitle>Long-Term Portfolio Value</CardTitle>
             <CardDescription>Daily closing values</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             {dailyLoading ? (
               <Skeleton className="h-[400px] w-full rounded-lg" />
             ) : chartData.length === 0 ? (
@@ -189,12 +292,14 @@ export default function DashboardPage() {
             ) : (
               <HistoryChart data={chartData} />
             )}
-
-            <PeriodSelector currentPeriod={period} onChange={setPeriod} />
+  
+            <div className="pt-2">
+              <PeriodSelector currentPeriod={period} onChange={setPeriod} />
+            </div>
           </CardContent>
         </Card>
-
-        <Card>
+  
+        <Card className="border-border/60 shadow-sm">
           <CardHeader>
             <CardTitle>Recent Daily Performance</CardTitle>
             <CardDescription>Last 20 trading days</CardDescription>
@@ -203,7 +308,7 @@ export default function DashboardPage() {
             {dailyLoading ? (
               <Skeleton className="h-96 w-full rounded-lg" />
             ) : tableData.length === 0 ? (
-              <div className="flex h-96 items-center justify-center text-muted-foreground">
+              <div className="h-96 flex items-center justify-center text-muted-foreground">
                 No data available
               </div>
             ) : (
@@ -211,7 +316,7 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
-
+  
         <div className="col-span-full">
           <SectorAllocationCard
             data={sectorDataArray}
@@ -223,7 +328,6 @@ export default function DashboardPage() {
             exchangeRate={exchangeRate}
           />
         </div>
-
       </div>
     </div>
   );

@@ -114,6 +114,15 @@ def process_csv(file_content: str, db: Session, account_id: Optional[int] = None
 
     df = df.dropna(subset=['amount'])
 
+    # ── CREDIT CARD AMOUNT INVERSION ────────────────────────────────────────
+    # For credit card accounts:
+    #   CSV positive = charges/purchases    → should be NEGATIVE in DB (expense)
+    #   CSV negative = payments/credits     → should be POSITIVE in DB (payment/income)
+    if account_id is not None:
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if account and account.type == "credit_card":
+            df['amount'] = -df['amount']   # Invert sign
+
     # ── Description column ──────────────────────────────────────────────────────
     desc_col_1 = None
     desc_col_2 = None

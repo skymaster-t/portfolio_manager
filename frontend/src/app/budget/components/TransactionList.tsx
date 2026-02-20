@@ -41,9 +41,11 @@ const RANGE_LABELS: Record<RangeOption, string> = {
 
 interface TransactionListProps {
   accounts: any[];
+  selectedAccountId: number | null;
+  onAccountChange: (id: number | null) => void;
 }
 
-export function TransactionList({ accounts }: TransactionListProps) {
+export function TransactionList({ accounts, selectedAccountId, onAccountChange }: TransactionListProps) {
   const { data: transactions = [] } = useTransactions();
   const { data: categories = [] } = useCategories();
   const queryClient = useQueryClient();
@@ -63,7 +65,7 @@ export function TransactionList({ accounts }: TransactionListProps) {
   });
 
   // Account filter (-1 = All)
-  const [selectedAccountId, setSelectedAccountId] = useState<number>(-1);
+  const [setSelectedAccountId] = useState<number>(-1);
 
   // NEW: Search filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,7 +152,7 @@ export function TransactionList({ accounts }: TransactionListProps) {
       });
     }
 
-    if (selectedAccountId !== -1) {
+    if (selectedAccountId !== null) {
       filtered = filtered.filter((t: any) => t.account_id === selectedAccountId);
     }
 
@@ -290,17 +292,23 @@ export function TransactionList({ accounts }: TransactionListProps) {
               </Select>
 
               <Select
-                value={selectedAccountId.toString()}
-                onValueChange={(v) => setSelectedAccountId(parseInt(v))}
+                value={selectedAccountId?.toString() ?? 'all'}
+                onValueChange={(val) => {
+                  if (val === 'all') {
+                    onAccountChange(null);
+                  } else {
+                    onAccountChange(parseInt(val));
+                  }
+                }}
               >
-                <SelectTrigger className="w-[140px] h-8 text-xs">
-                  <SelectValue placeholder="Filter by Account" />
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Accounts" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="-1">All Accounts</SelectItem>
-                  {uniqueAccounts.map((acc: any) => (
+                  <SelectItem value="all">All Accounts</SelectItem>
+                  {accounts.map((acc: any) => (
                     <SelectItem key={acc.id} value={acc.id.toString()}>
-                      {acc.name}
+                      {acc.name} {acc.type ? `(${acc.type})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
